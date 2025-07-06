@@ -2,5 +2,4 @@ build
 data
 install
 log
-src/realsense-ros
-src/ros2_rs_pcl
+docker/.bash_history

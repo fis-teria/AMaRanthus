@@ -29,15 +29,14 @@ public:
   message_filters::Synchronizer<approximate_policy> sync_;
 
   ImageCombiner()
-      : Node("image_combiner_node"),
+      : Node("realsense_2dpoint_cloud_node"),
 
         sync_(approximate_policy(10), rgb_sub_, depth_sub_)
   {
     common::make_LUT(lut);
     rgb_sub_.subscribe(this, "/camera/camera/color/image_raw");
     depth_sub_.subscribe(this, "/camera/camera/aligned_depth_to_color/image_raw");
-    imu_sub_.subscribe(this, "/camera/camera/imu");
-    combined_image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/output_image", 10);
+    combined_image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/sonor_image", 10);
 
     sync_.registerCallback(&ImageCombiner::topic_callback, this);
   }
@@ -64,8 +63,9 @@ public:
     18200 18200 140
     */
     
-    int border = 18200;
+    int border = 10050;
     float norm = 255 / 140;
+
     for (int x = 0; x < depth_cv_image.cols; x++)
     {
       for (int y = 0; y < depth_cv_image.rows; y++)
@@ -79,8 +79,13 @@ public:
     }
     // Normalize depth image for visualization
     cv::Mat depth_norm_image;
+    cv::Mat sonor_img = cv::Mat(depth_cv_image.rows, depth_cv_image.cols, CV_8UC3);
+    sonor_img = cv::Scalar::all(0);
     depth_cv_image.copyTo(depth_norm_image);
-    cv::normalize(depth_cv_image, depth_cv_image, 0, 130, cv::NORM_MINMAX, CV_8UC1);
+    cv::normalize(depth_cv_image, depth_cv_image, 0, 140, cv::NORM_MINMAX, CV_8UC1);
+    float world_pos[3];
+    int y_pos_;
+    int x_pos_;
 
     // std::cout << rgbd_cv_image.size() << " " << depth_cv_image.size() << std::endl;
     for (int x = 0; x < depth_cv_image.cols; x++)
@@ -89,53 +94,33 @@ public:
       {
         if (depth_cv_image.at<unsigned char>(y, x) > 130 || depth_cv_image.at<unsigned char>(y, x) == 0)
         {
-          rgbd_cv_image.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+          sonor_img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
         }
         else
         {
-          rgbd_cv_image.at<cv::Vec3b>(y, x) = cv::Vec3b(depth_cv_image.at<unsigned char>(y, x), 255, 255); // S = I_ij *255/ (depth_max/130)
+          common::doDeprojectPosition(depth_cv_image, x, y, world_pos);
+          y_pos_ = sonor_img.rows - world_pos[2] * (sonor_img.rows / 2) / border;
+          x_pos_ = sonor_img.cols / 2 + world_pos[0] * (sonor_img.cols / 2) / 10000;
+          //std::cout << x_pos_ << " " << y_pos_ << std::endl;
+          sonor_img.at<cv::Vec3b>(y_pos_, x_pos_) = cv::Vec3b(depth_cv_image.at<unsigned char>(y, x), 255, 255); // S = I_ij *255/ (depth_max/130)
         }
       }
     }
     // Convert normalized 8-bit depth image to 3-channel for visualization
     // cv::cvtColor(depth_cv_image, depth_cv_image, cv::COLOR_GRAY2BGR);
-    cv::cvtColor(rgbd_cv_image, rgbd_cv_image, cv::COLOR_HSV2BGR);
+    cv::cvtColor(sonor_img, sonor_img, cv::COLOR_HSV2BGR);
 
     // Combine the images side by side
 
-    cv::resize(rgb_cv_image, rgb_cv_image, cv::Size(848, 480));
-    // cv::resize(depth_cv_image, depth_cv_image, cv::Size(848, 480));
-    cv::resize(rgbd_cv_image, rgbd_cv_image, cv::Size(848, 480));
-
-    common::cvt_ELBP(rgb_cv_image, elbp_cv_image, this->lut);
-    common::cvt_depth_edge_image(elbp_cv_image, rgbd_cv_image, dedge_cv_image);
-
-    /*
-    cv::imwrite(common::make_path("data/images/corridor/floor/color", this->num, ".jpg"), rgb_cv_image);
-    //cv::imwrite(common::make_path("data/images/amalab/test/depth", this->num, ".jpg"), depth_cv_image);
-    cv::imwrite(common::make_path("data/images/corridor/floor/depth", this->num, ".jpg"), rgbd_cv_image);
-    cv::imwrite(common::make_path("data/images/corridor/floor/dedge", this->num, ".jpg"), dedge_cv_image);
-    this->num++;//*/
-    /*const int key = cv::waitKey(100);
-    if (key == 'q'/) // qボタンが押されたとき
-    {
-      cv::imwrite(common::make_path("data/images/corridor/relative_position/color", this->num, ".jpg"), rgb_cv_image);
-      cv::imwrite(common::make_path("data/images/corridor/relative_position/depth", this->num, ".jpg"), rgbd_cv_image);
-      cv::imwrite(common::make_path("data/images/corridor/relative_position/dedge", this->num, ".jpg"), dedge_cv_image);
-      this->num++;
-    }//*/
-    cv::Mat combined_cv_image;
-    // cv::hconcat(rgb_cv_image, depth_cv_image, combined_cv_image);
-    cv::hconcat(rgb_cv_image, rgbd_cv_image, combined_cv_image);
-    cv::hconcat(combined_cv_image, dedge_cv_image, combined_cv_image);
-
+    cv::resize(sonor_img, sonor_img, cv::Size(848, 480));
+ 
     cv::Mat view_img;
-    cv::resize(combined_cv_image, view_img, cv::Size(), 0.7, 0.7);
+    cv::resize(sonor_img, view_img, cv::Size(), 0.7, 0.7);
 
-    //cv::imshow("combined_cv_image", view_img);
+    cv::imshow("combined_cv_image", view_img);
     // Convert combined OpenCV Mat to ROS Image message
-    sensor_msgs::msg::Image::SharedPtr combined_image = cv_bridge::CvImage(rgb_image->header, "bgr8", combined_cv_image).toImageMsg();
-    combined_image_pub_->publish(*combined_image);
+    sensor_msgs::msg::Image::SharedPtr sonor_image = cv_bridge::CvImage(rgb_image->header, "bgr8", sonor_img).toImageMsg();
+    combined_image_pub_->publish(*sonor_image);
     RCLCPP_INFO(this->get_logger(), "Combined image published");
 
     cv::waitKey(200);

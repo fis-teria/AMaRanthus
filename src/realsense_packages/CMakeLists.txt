@@ -19,7 +19,7 @@ find_package(std_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(cv_bridge REQUIRED)
 #find_package(librealsense2 REQUIRED)
-find_package(realsense2 2.55.1)
+find_package(realsense2 2.54.2)
 
 # インクルードパスの追加
 #add include Path
@@ -60,9 +60,14 @@ endif()
 #  install(TARGETS ${target} DESTINATION lib/${PROJECT_NAME})
 #endforeach()
 
-add_executable(realsense-sample src/realsense-sample.cpp)
-ament_target_dependencies(realsense-sample rclcpp OpenCV cv_bridge sensor_msgs message_filters realsense2)
-install(TARGETS realsense-sample DESTINATION lib/${PROJECT_NAME})
+set(EXECUTABLE "realsense-sample;realsense_2dpoint")
+foreach(target IN LISTS EXECUTABLE)
+  add_executable(${target} src/${target}.cpp)
+  ament_target_dependencies(${target} rclcpp OpenCV cv_bridge sensor_msgs message_filters realsense2)
+  install(TARGETS ${target} DESTINATION lib/${PROJECT_NAME})
+endforeach()
+
+
 
 ament_package()
 

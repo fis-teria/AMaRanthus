@@ -279,11 +279,11 @@ namespace common
         int y_pix = y;
         const float pixel[] = {(float)x_pix, (float)y_pix};
         float point[3];
-        float dis = depth_image.at<cv::Vec3b>(y_pix, x_pix)[0] * (3050 / 130);
+        float dis = depth_image.at<cv::Vec3b>(y_pix, x_pix)[0] * (18200 / 140);
 
         deproject_pixel_to_point(point, &intr, pixel, dis);
 
-        std::cout << "[ " << x_pix << "px, " << y_pix << "px , " << dis << " ] = " << "[ " << point[0] << ", " << point[1] << ", " << point[2] << "]" << std::endl;
+        //std::cout << "[ " << x_pix << "px, " << y_pix << "px , " << dis << " ] = " << "[ " << point[0] << ", " << point[1] << ", " << point[2] << "]" << std::endl;
         ;
 
         result[0] = point[0];
