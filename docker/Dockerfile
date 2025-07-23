@@ -64,7 +64,10 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       ros-humble-cv-bridge \
       ros-humble-pcl-conversions \
       ros-humble-teleop-twist-keyboard \
-      ros-humble-diagnostic-updater
+      ros-humble-diagnostic-updater \
+      ros-humble-teleop-twist-joy \
+      ros-humble-rtabmap* \
+      ros-humble-rmw-cyclonedds-cpp
 
 
 # bootstrap rosdep
@@ -90,6 +93,14 @@ RUN git clone https://github.com/IntelRealSense/librealsense.git /librealsense &
     make -j$(nproc) && \
     make install
 
+# ~/.bashrc に記述。
+RUN echo "source /opt/ros/humble/setup.sh" >> ~/.bashrc
+RUN echo "source /root/autonomous/install/setup.bash" >> ~/.bashrc
+RUN echo "export RCUTILS_LOGGING_USE_STDOUT=1" >> ~/.bashrc
+RUN echo "export RCUTILS_LOGGING_BUFFERED_STREAM=1" >> ~/.bashrc
+RUN echo "export RCUTILS_COLORIZED_OUTPUT=1" >> ~/.bashrc
+RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+RUN echo 'export CYCLONEDDS_URI="<Disc><DefaultMulticastAddress>0.0.0.0</DefaultMulticastAddress></Disc>"' >> ~/.bashrc
 
 # install ros2 packages
 RUN apt-get update && apt-get install -y --no-install-recommends \

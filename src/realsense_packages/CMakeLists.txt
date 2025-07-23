@@ -60,7 +60,7 @@ endif()
 #  install(TARGETS ${target} DESTINATION lib/${PROJECT_NAME})
 #endforeach()
 
-set(EXECUTABLE "realsense-sample;realsense_2dpoint")
+set(EXECUTABLE "realsense-sample;realsense_laser_scan")
 foreach(target IN LISTS EXECUTABLE)
   add_executable(${target} src/${target}.cpp)
   ament_target_dependencies(${target} rclcpp OpenCV cv_bridge sensor_msgs message_filters realsense2)

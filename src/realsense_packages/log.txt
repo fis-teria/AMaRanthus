@@ -1,0 +1,89 @@
+    void callback(sensor_msgs::msg::Image::SharedPtr depth_image)
+    {
+    // Convert ROS Image messages to OpenCV Mat
+    cv::Mat depth_cv_image = cv_bridge::toCvShare(depth_image, "16UC1")->image;
+
+    // ガード処理用の変数
+    int border = 10050;
+    float h_ang = 140;
+    float norm = border / h_ang;
+
+    // ソナー画像作成用変数
+    cv::Mat depth_norm_image;
+    cv::Mat sonor_img = cv::Mat(depth_cv_image.rows, depth_cv_image.cols, CV_8UC3);
+    sonor_img = cv::Scalar::all(0);
+
+    // ワールド座標と極座標
+    float world_pos[3];
+    int y_pos_;
+    int x_pos_;
+
+    // Publishするイメージ
+    cv::Mat view_img;
+
+    // 深度のガード処理
+    /*
+    max border h_ang
+    3000  3050
+    10000 10050
+    18200 18200 140
+    */
+
+    for (int x = 0; x < depth_cv_image.cols; x++)
+    {
+      for (int y = 0; y < depth_cv_image.rows; y++)
+      {
+        if (depth_cv_image.at<unsigned short>(y, x) > border) // 3000 or 10000 or182000
+        {
+          depth_cv_image.at<unsigned short>(y, x) = border; // 3050 or 10050 or 18200
+        }
+        // std::cout << depth_cv_image << std::endl;
+      }
+    }
+    // Normalize depth image for visualization
+    depth_cv_image.copyTo(depth_norm_image);
+    cv::normalize(depth_cv_image, depth_cv_image, 0, h_ang, cv::NORM_MINMAX, CV_8UC1);
+
+    // std::cout << rgbd_cv_image.size() << " " << depth_cv_image.size() << std::endl;
+    for (int x = 0; x < depth_cv_image.cols; x++)
+    {
+      for (int y = depth_cv_image.rows / 2 - 100; y < depth_cv_image.rows / 2 + 100; y++)
+      {
+        if (depth_cv_image.at<unsigned char>(y, x) > 130 || depth_cv_image.at<unsigned char>(y, x) == 0)
+        {
+          sonor_img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+        }
+        else
+        {
+          common::doDeprojectPosition(depth_cv_image, x, y, world_pos, norm);
+          y_pos_ = sonor_img.rows - world_pos[2] * (sonor_img.rows) / border;
+          x_pos_ = sonor_img.cols / 2 + world_pos[0] * (sonor_img.cols / 2) / border;
+          //std::cout << x_pos_ << " " << y_pos_ <<  " " << (int)depth_cv_image.at<unsigned char>(y, x) << " " << world_pos[2] << std::endl;
+          sonor_img.at<cv::Vec3b>(y_pos_, x_pos_) = cv::Vec3b(depth_cv_image.at<unsigned char>(y, x), 255, 255); // S = I_ij *255/ (depth_max/130)
+          rgbd_cv_image.at<cv::Vec3b>(y, x) = cv::Vec3b(depth_cv_image.at<unsigned char>(y, x), 255, 255);
+        }
+      }
+    }
+    // Convert normalized 8-bit depth image to 3-channel for visualization
+    // cv::cvtColor(depth_cv_image, depth_cv_image, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(sonor_img, sonor_img, cv::COLOR_HSV2BGR);
+    cv::cvtColor(rgbd_cv_image, rgbd_cv_image, cv::COLOR_HSV2BGR);
+
+    // Combine the images side by side
+    cv::Mat combined_cv_image;
+
+    cv::resize(sonor_img, sonor_img, cv::Size(848, 480));
+    cv::resize(rgbd_cv_image, rgbd_cv_image, cv::Size(848, 480));
+
+    cv::hconcat(sonor_img, rgbd_cv_image, combined_cv_image);
+
+    cv::resize(combined_cv_image, view_img, cv::Size(), 1.0, 1.0);
+
+    cv::imshow("combined_cv_image", view_img);
+    // Convert combined OpenCV Mat to ROS Image message
+    sensor_msgs::msg::Image::SharedPtr sonor_image = cv_bridge::CvImage(rgb_image->header, "bgr8", sonor_img).toImageMsg();
+    combined_image_pub_->publish(*sonor_image);
+    RCLCPP_INFO(this->get_logger(), "sonor image published");
+
+    cv::waitKey(200);
+  }

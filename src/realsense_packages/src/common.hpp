@@ -246,7 +246,7 @@ namespace common
         point[2] = depth;
     }
 
-    void doDeprojectPosition(const cv::Mat &depth_image, int x, int y, float result[3])
+    void doDeprojectPosition(const cv::Mat &depth_image, int x, int y, float result[3], float norm)
     {
         /****************
         Realsense Internal Parameters
@@ -279,7 +279,7 @@ namespace common
         int y_pix = y;
         const float pixel[] = {(float)x_pix, (float)y_pix};
         float point[3];
-        float dis = depth_image.at<cv::Vec3b>(y_pix, x_pix)[0] * (18200 / 140);
+        float dis = depth_image.at<unsigned char>(y_pix, x_pix) * norm;
 
         deproject_pixel_to_point(point, &intr, pixel, dis);
 
