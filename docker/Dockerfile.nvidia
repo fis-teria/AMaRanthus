@@ -1,0 +1,205 @@
+# This is an auto generated Dockerfile for ros:ros-base
+# generated from docker_images_ros2/create_ros_image.Dockerfile.em
+FROM nvcr.io/nvidia/l4t-base:r36.2.0
+#FROM nvcr.io/nvidia/l4t-cuda:12.2.12-runtime
+#FROM nvcr.io/nvidia/isaac/nova_developer_kit_bringup:release_3.2-aarch64
+
+ENV DEBIAN_FRONTEND=noninteractive
+ARG UID=1000
+ARG GID=1000
+
+# 開発に必要な OS パッケージのみ
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git x11-apps cmake pkg-config nano\
+    libusb-1.0-0-dev libgtk-3-dev libglfw3-dev \
+    libgl1-mesa-dev libglu1-mesa-dev libssl-dev libudev-dev \
+    libx11-dev libxi-dev libxt-dev net-tools arp-scan usbutils \
+    curl gnupg2 lsb-release ca-certificates python3-pip \
+    libnanoflann-dev \
+    libnvinfer8 libnvinfer-dev libnvinfer-plugin8 python3-libnvinfer \
+ && rm -rf /var/lib/apt/lists/*
+
+# CUDA Toolkit（nvcc を含む）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      cuda-toolkit-12-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# CMake が見つけやすいように
+ENV CUDAToolkit_ROOT=/usr/local/cuda
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:$PATH
+# 未定義参照の警告を避ける
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
+
+# ROS 2 APT リポジトリ（Ubuntu 22.04 / arm64）
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+ | tee /usr/share/keyrings/ros-archive-keyring.gpg > /dev/null && \
+ echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+ > /etc/apt/sources.list.d/ros2.list
+
+# ROS 2 本体（desktop メタパッケージ）＋必要 add-on
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-humble-desktop \
+      ros-dev-tools \
+      ros-humble-joint-state-publisher \
+      ros-humble-rqt-* \
+      ros-humble-pcl-* \
+      ros-humble-teleop-twist-keyboard \
+      ros-humble-diagnostic-updater \
+      ros-humble-rtabmap\* \
+      ros-humble-rmw-cyclonedds-cpp \
+      ros-humble-rmw-fastrtps-cpp \
+      ros-humble-test-msgs \
+ && rm -rf /var/lib/apt/lists/*
+
+# Python 系ツールは pip で統一（APT と重複させない）
+ENV PIP_ROOT_USER_ACTION=ignore
+RUN python3 -m pip install --no-cache-dir -U \
+      rosdep vcstool colcon-common-extensions colcon-core colcon-ros \
+      catkin_pkg 'empy==3.3.4' packaging pytest PyYAML argcomplete colcon-mixin
+
+# rosdep 初期化（失敗してもビルドを止めない）
+RUN rosdep init || true && rosdep update || true
+
+# colcon mixin は idempotent に追加
+RUN bash -lc 'colcon mixin list 2>/dev/null | grep -qE "^default([[:space:]]|$)" || \
+              colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml; \
+              colcon mixin update'
+
+# -------------------------------------------------------------------
+#                  OpenCV 4.5.4 (Source build, with CUDA)
+# -------------------------------------------------------------------
+
+# OpenCV を 4.8 系でビルド（CUDA ON、/usr/local 配置）
+ARG OPENCV_VERSION=4.8.1
+# Orin(8.7) / Xavier(7.2) / Nano(5.3) などに合わせて変更可
+ARG CUDA_ARCH_BIN=8.7
+
+# 競合する APT/CMake の痕跡を先に除去（/usr/lib 側の opencv4 CMake を無効化）
+RUN rm -rf /usr/lib/cmake/opencv4 /usr/lib/aarch64-linux-gnu/cmake/opencv4 || true
+
+# OpenCV 4.8 をソースからビルド＆インストール
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git pkg-config \
+      libgtk-3-dev libtbb-dev \
+      libavcodec-dev libavformat-dev libswscale-dev libavutil-dev libswresample-dev \
+      libjpeg-dev libpng-dev libtiff-dev libwebp-dev libopenjp2-7-dev \
+      libdc1394-22-dev libv4l-dev \
+      libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+      python3-dev python3-numpy \
+    && rm -rf /var/lib/apt/lists/*; \
+    \
+    git clone --depth 1 --branch ${OPENCV_VERSION} https://github.com/opencv/opencv.git /tmp/opencv; \
+    git clone --depth 1 --branch ${OPENCV_VERSION} https://github.com/opencv/opencv_contrib.git /tmp/opencv_contrib; \
+    cmake -S /tmp/opencv -B /tmp/opencv/build \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_INSTALL_PREFIX=/usr/local \
+      -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
+      -D OPENCV_ENABLE_NONFREE=ON \
+      -D OPENCV_GENERATE_PKGCONFIG=ON \
+      #-D BUILD_LIST="core,imgproc,highgui,videoio,calib3d,dnn,features2d,flann,photo,gapi,stitching,video,cudev,cudaarithm,cudawarping,cudaimgproc,cudafilters,cudafeatures2d,cudastereo,cudacodec" \
+      -D WITH_CUDA=ON \
+      -D WITH_CUDNN=OFF \
+      -D WITH_EIGEN=ON \
+      -D WITH_GSTREAMER=ON \
+      -D WITH_QT=OFF \
+      -D WITH_OPENGL=ON \
+      -D WITH_V4L=ON \
+      -D ENABLE_FAST_MATH=ON \
+      -D ENABLE_NEON=ON \
+      -D WITH_TBB=ON \
+      -D CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+      -D CUDA_NVCC_FLAGS="--expt-relaxed-constexpr" \
+      -D CUDA_ARCH_BIN=${CUDA_ARCH_BIN} \
+      ; \
+    cmake --build /tmp/opencv/build -j"$(nproc)"; \
+    cmake --install /tmp/opencv/build; \
+    ldconfig; \
+    \
+    # Python の cv2 を見える場所へ（OpenCV が置いた .so を site-packages へリンク）
+    pyso="$(python3 -c "import glob; import sys; cand=glob.glob('/usr/local/python/cv2/python-*/cv2.*.so'); print(cand[0] if cand else '')")"; \
+    if [ -n "$pyso" ]; then \
+        sitepkg="$(python3 -c 'import site; print(site.getsitepackages()[0])')"; \
+        ln -sf "$pyso" "$sitepkg/cv2.so"; \
+    fi; \
+    rm -rf /tmp/opencv /tmp/opencv_contrib
+
+# OpenCV を /usr/local 優先で“必ず”見せるための環境固定
+ENV OpenCV_DIR=/usr/local/lib/cmake/opencv4
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+ENV CMAKE_PREFIX_PATH=/usr/local:${CMAKE_PREFIX_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+
+# 参考: APT の OpenCV を誤って入れない（将来の apt upgrade などで衝突させない）
+RUN printf 'Package: libopencv*\nPin: release *\nPin-Priority: -1\n' > /etc/apt/preferences.d/99-no-opencv-apt
+
+# ROS2/colcon 実行シェルでも確実に /usr/local を拾わせる
+RUN echo 'export OpenCV_DIR=/usr/local/lib/cmake/opencv4' >> /etc/bash.bashrc && \
+    echo 'export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}' >> /etc/bash.bashrc && \
+    echo 'export CMAKE_PREFIX_PATH=/usr/local:${CMAKE_PREFIX_PATH}' >> /etc/bash.bashrc && \
+    echo 'export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}' >> /etc/bash.bashrc
+
+# -------------------------------------------------------------------
+#           librealsense (JetPack 6.2.1 / Ubuntu 22.04)
+# -------------------------------------------------------------------
+ARG LRS_VERSION=2.56.4
+ARG BUILD_LRS_VIEWER=1
+
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git pkg-config \
+      libusb-1.0-0-dev libssl-dev libudev-dev \
+      libgl1-mesa-dev libglu1-mesa-dev libglfw3-dev \
+      libhidapi-dev \
+      ca-certificates \
+      $( [ "$BUILD_LRS_VIEWER" = "1" ] && echo "qtbase5-dev libqt5x11extras5-dev qml-module-qtquick-controls qml-module-qtgraphicaleffects qml-module-qt-labs-settings qml-module-qt-labs-folderlistmodel" ) \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch "v${LRS_VERSION}" https://github.com/IntelRealSense/librealsense.git /tmp/librealsense && \
+    cmake -S /tmp/librealsense -B /tmp/librealsense/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DFORCE_RSUSB_BACKEND=ON \
+      -DGLFW_USE_EGL=ON \
+      -DBUILD_EXAMPLES=ON \
+      -DBUILD_WITH_CUDA=ON \
+      -DBUILD_GRAPHICAL_EXAMPLES=ON && \
+    cmake --build /tmp/librealsense/build -j"$(nproc)" && \
+    cmake --install /tmp/librealsense/build && \
+    ldconfig && \
+    rm -rf /tmp/librealsense
+
+# /usr/local/lib をリンカに登録（librealsense 実行時用）
+RUN printf '/usr/local/lib\n' > /etc/ld.so.conf.d/zz-local-librealsense.conf && ldconfig
+
+# 実行時 HID ライブラリ（最小にしたいなら削ってOK）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libhidapi-hidraw0 libhidapi-libusb0 \
+ && rm -rf /var/lib/apt/lists/*
+
+# APT 由来の librealsense をブロック（混在防止）
+RUN printf 'Package: librealsense2*\nPin: release *\nPin-Priority: -1\n' \
+    > /etc/apt/preferences.d/99-no-librealsense2
+
+# rs-* は /usr/local のものを優先
+RUN update-alternatives --install /usr/bin/rs-enumerate-devices rs-enumerate-devices /usr/local/bin/rs-enumerate-devices 100 || true && \
+    update-alternatives --install /usr/bin/realsense-viewer realsense-viewer /usr/local/bin/realsense-viewer 100 || true
+
+# （任意）/opt/ros 配下の rs-* / librealsense を削除したい場合のみ
+RUN find /opt/ros/humble -maxdepth 4 -type f -name 'librealsense2*.so*' -delete || true && \
+    find /opt/ros/humble/bin -maxdepth 1 -type f -name 'rs-*' -delete || true
+
+# 利便用設定
+RUN echo "source /opt/ros/humble/setup.sh" >> /root/.bashrc && \
+    echo "source /root/autonomous/install/setup.bash" >> /root/.bashrc && \
+    #echo "export RCUTILS_LOGGING_USE_STDOUT=1" >> /root/.bashrc && \
+    #echo "export RCUTILS_LOGGING_BUFFERED_STREAM=1" >> /root/.bashrc && \
+    #echo "export RCUTILS_COLORIZED_OUTPUT=1" >> /root/.bashrc && \
+    echo "unset CYCLONEDDS_URI ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT" >> /root/.bashrc && \
+    echo "unset ROS_SECURITY_ENABLE ROS_SECURITY_STRATEGY ROS_SECURITY_KEYSTORE" >> /root/.bashrc && \
+    echo "export ROS_DOMAIN_ID=0" >> /root/.bashrc && \
+    echo "export ROS_LOCALHOST_ONLY=1" >> /root/.bashrc && \
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /root/.bashrc
+    #echo 'export CYCLONEDDS_URI="<Disc><DefaultMulticastAddress>0.0.0.0</DefaultMulticastAddress></Disc>"' >> /root/.bashrc

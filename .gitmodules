@@ -1,9 +1,6 @@
-[submodule "src/realsense-ros"]
-	path = src/realsense-ros
-	url = https://github.com/IntelRealSense/realsense-ros.git
-[submodule "src/ros2_rs_pcl"]
-	path = src/ros2_rs_pcl
-	url = https://github.com/fis-teria/ros2_rs_pcl.git
-[submodule "src/rtabmap_ros"]
-	path = src/rtabmap_ros
+[submodule "src/drivers/realsense-ros"]
+	path = src/drivers/realsense-ros
+	url = git@github.com:IntelRealSense/realsense-ros.git
+[submodule "src/slam/rtabmap_ros"]
+	path = src/slam/rtabmap_ros
 	url = git@github.com:fis-teria/rtabmap_ros.git

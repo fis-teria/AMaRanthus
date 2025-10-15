@@ -65,7 +65,6 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       ros-humble-pcl-conversions \
       ros-humble-teleop-twist-keyboard \
       ros-humble-diagnostic-updater \
-      ros-humble-teleop-twist-joy \
       ros-humble-rtabmap* \
       ros-humble-rmw-cyclonedds-cpp
 
