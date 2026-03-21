@@ -1,0 +1,50 @@
+# obstacle_grid のROS2パラメータファイル
+# 使い方:
+#   ros2 run obstacle_grid obstacle_grid_node --ros-args --params-file config.yaml
+#
+# RViz:
+#   Fixed Frame: base_link
+#   /obstacle_grid (Map), /obstacle_cells (Marker)
+
+obstacle_grid_node:
+  ros__parameters:
+    # --- I/O ---
+    points_topic: "/points"         # 点群トピック
+    output_frame: "base_link"       # 出力フレーム（RVizのFixed Frameにも合わせてね）
+
+    # --- グリッド設定 ---
+    grid_resolution: 0.10           # [m/セル] 0.05〜0.20 推奨
+    grid_width_cells: 200           # X方向のセル数（前後・進行方向）
+    grid_height_cells: 200          # Y方向のセル数（左右）
+    origin_x: -10.0                 # [m] グリッド原点X（ロボット基準）
+    origin_y: -10.0                 # [m] グリッド原点Y
+
+    # --- 高さフィルタ ---
+    z_min: 0.05                     # [m] 地面ノイズ除去（例: 0.02m付近の砂利などを弾く）
+    z_max: 2.0                      # [m] 上方向クリップ（不要な上空点を無視）
+    obstacle_min_height: 0.10       # [m] これ以上の高さを障害物として扱う
+
+    # --- 占有判定 ---
+    min_points_per_cell: 2          # セル占有とみなす最小点数（ノイズ多いときは↑）
+
+    # --- 可視化 ---
+    publish_markers: true           # RViz の CUBE_LIST を出す
+
+    # ===== 推奨プリセット（コメントを外して使ってね） =====
+    # 【屋内フラット床・密なLiDAR】
+    # grid_resolution: 0.08
+    # z_min: 0.03
+    # obstacle_min_height: 0.07
+    # min_points_per_cell: 3
+
+    # 【屋外・凹凸あり（地面バラつき大）】
+    # grid_resolution: 0.12
+    # z_min: 0.08
+    # obstacle_min_height: 0.12
+    # min_points_per_cell: 3
+
+    # 【高速移動・広い視野を軽くカバー】
+    # grid_resolution: 0.15
+    # grid_width_cells: 240         # 24m
+    # grid_height_cells: 160        # 16m
+    # min_points_per_cell: 2

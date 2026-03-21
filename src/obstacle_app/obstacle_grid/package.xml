@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>obstacle_grid_cuda</name>
+  <name>obstacle_grid</name>
   <version>0.0.1</version>
-  <description>GPU-accelerated obstacle grid from pointcloud</description>
+  <description>Lightweight obstacle detection from pointcloud</description>
   <maintainer email="you@example.com">you</maintainer>
   <license>Apache-2.0</license>
 
@@ -12,9 +12,6 @@
   <depend>nav_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
-  <test_depend>ament_lint_auto</test_depend>
-  <test_depend>ament_lint_common</test_depend>
-
   <export>
     <build_type>ament_cmake</build_type>
   </export>
