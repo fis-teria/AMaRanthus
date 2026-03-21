@@ -1,6 +1,23 @@
 [submodule "src/drivers/realsense-ros"]
 	path = src/drivers/realsense-ros
 	url = git@github.com:IntelRealSense/realsense-ros.git
+
 [submodule "src/slam/rtabmap_ros"]
 	path = src/slam/rtabmap_ros
 	url = git@github.com:fis-teria/rtabmap_ros.git
+
+[submodule "src/drivers/livox_ros_driver2"]
+	path = src/drivers/livox_ros_driver2
+	url = git@github.com:fis-teria/livox_ros_driver2.git
+
+[submodule "src/drivers/ws_livox/src"]
+	path = src/drivers/ws_livox/src
+	url = git@github.com:fis-teria/livox_ros2_driver.git
+
+[submodule "src/img_proc/mediapipe_ros2_suite"]
+	path = src/img_proc/mediapipe_ros2_suite
+	url = git@github.com:fis-teria/mediapipe_ros2_suite.git
+
+[submodule "src/slam/navigation2"]
+	path = src/slam/navigation2
+	url = git@github.com:fis-teria/navigation2.git
