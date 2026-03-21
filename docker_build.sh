@@ -51,7 +51,7 @@ if is_jetson; then
 else
   echo "[INFO] 通常の Ubuntu 環境と判断しました。ros2-humble をビルドします。"
 
-  UBUNTU_CTX="${SCRIPT_DIR}/docker"
+  UBUNTU_CTX="${SCRIPT_DIR}"
   [[ -d "${UBUNTU_CTX}" ]] || die "docker ディレクトリが見つかりません（${UBUNTU_CTX}）"
   [[ -f "${UBUNTU_CTX}/Dockerfile" ]] || die "Dockerfile が ${UBUNTU_CTX}/Dockerfile に見つかりません。"
 

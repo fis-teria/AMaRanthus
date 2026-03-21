@@ -1,33 +1,58 @@
-# This is an auto generated Dockerfile for ros:ros-base
-# generated from docker_images_ros2/create_ros_image.Dockerfile.em
-FROM ros:humble-ros-core-jammy
+# ROS 2 Humble + Ubuntu 22.04 (Jammy)
+FROM ros:humble-ros-base-jammy
 
-# ライブラリパスを設定
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+ENV ROS_DISTRO=humble
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV RCUTILS_LOGGING_USE_STDOUT=1
+ENV RCUTILS_LOGGING_BUFFERED_STREAM=1
+ENV RCUTILS_COLORIZED_OUTPUT=1
 
-ARG UID=1000 # ホストのユーザーIDと一致させる
+ARG UID=1000
 ARG GID=1000
- 
-#RUN apt-get update && apt-get install -y sudo
-#
-#RUN groupadd -g $GID admin && \
-#    useradd -m -u $UID -g $GID -s /bin/bash admin && \
-#    echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-#
+ARG USERNAME=admin
 
-# install bootstrap tools
-RUN apt-get update && apt-get install --no-install-recommends -y \
+# 基本ツール、開発ツール、ネットワーク確認ツール、便利ツール
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sudo \
+    bash-completion \
     build-essential \
+    cmake \
     git \
+    curl \
+    wget \
+    gnupg2 \
+    lsb-release \
+    ca-certificates \
+    software-properties-common \
+    pkg-config \
+    nano \
+    vim \
+    less \
+    unzip \
+    zip \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    dnsutils \
+    traceroute \
+    tcpdump \
+    nmap \
+    arp-scan \
+    ethtool \
+    usbutils \
+    pciutils \
+    udev \
+    x11-apps \
+    mesa-utils \
+    python3-pip \
+    python3-dev \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
     python3-rosdep \
     python3-vcstool \
-    x11-apps\
-    cmake \
     libusb-1.0-0-dev \
-    pkg-config \
     libgtk-3-dev \
     libglfw3-dev \
     libgl1-mesa-dev \
@@ -37,71 +62,82 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     libx11-dev \
     libxi-dev \
     libxt-dev \
-    net-tools \
-    arp-scan \
     && rm -rf /var/lib/apt/lists/*
 
-# ROS2新しい公開鍵の設定
-## 1. 必要なツールをインストール
-#RUN apt-get update && apt-get install -y gnupg
-#
-## 古い ROS 鍵を削除（存在しない場合もあるので || true を付ける）
-#RUN apt-key del F42ED6FBAB17C654 || true
-#
-## 2. ROS 公式の新しい GPG 鍵を取得して保存
-#RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-#    -o /usr/share/keyrings/ros-archive-keyring.gpg
-#
-## 3. ROS 2 Humble 用の APT リポジトリを追加
-#RUN echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-#    http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-#    > /etc/apt/sources.list.d/ros2.list
+# 一般ユーザーを追加（ホストUID/GIDに合わせやすくする）
+RUN groupadd -g ${GID} ${USERNAME} && \
+    useradd -m -s /bin/bash -u ${UID} -g ${GID} ${USERNAME} && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
+# ROS 2 パッケージ
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-desktop \
+    ros-humble-cv-bridge \
+    ros-humble-pcl-conversions \
+    ros-humble-teleop-twist-keyboard \
+    ros-humble-diagnostic-updater \
+    ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-rtabmap \
+    ros-humble-rtabmap-ros \
+    && rm -rf /var/lib/apt/lists/*
 
-# ROS2 packages
-RUN apt-get update && apt-get install --no-install-recommends -y \  
-      ros-humble-desktop \
-      ros-humble-cv-bridge \
-      ros-humble-pcl-conversions \
-      ros-humble-teleop-twist-keyboard \
-      ros-humble-diagnostic-updater \
-      ros-humble-rtabmap* \
-      ros-humble-rmw-cyclonedds-cpp
+# rosdep 初期化
+RUN rosdep init || true && \
+    rosdep update --rosdistro ${ROS_DISTRO}
 
-
-# bootstrap rosdep
-RUN rosdep init || echo "rosdep already initialized" && \
-  rosdep update --rosdistro $ROS_DISTRO
-
-# setup colcon mixin and metadata
+# colcon mixin / metadata
 RUN colcon mixin add default \
-      https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml && \
+      https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml || true && \
     colcon mixin update && \
     colcon metadata add default \
-      https://raw.githubusercontent.com/colcon/colcon-metadata-repository/master/index.yaml && \
+      https://raw.githubusercontent.com/colcon/colcon-metadata-repository/master/index.yaml || true && \
     colcon metadata update
 
-# librealsense クローンとビルド（Viewer付き）
-RUN git clone https://github.com/IntelRealSense/librealsense.git /librealsense && \
-    cd /librealsense && \
+# librealsense ビルド
+WORKDIR /opt
+RUN git clone https://github.com/IntelRealSense/librealsense.git && \
+    cd librealsense && \
     git checkout v2.55.1 && \
-    mkdir build && cd build && \
-    cmake .. -DBUILD_EXAMPLES=true -DBUILD_GRAPHICAL_EXAMPLES=true && \
-    make uninstall && \
-    make clean && \
-    make -j$(nproc) && \
-    make install
+    mkdir -p build && cd build && \
+    cmake .. \
+      -DBUILD_EXAMPLES=true \
+      -DBUILD_GRAPHICAL_EXAMPLES=true && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig
 
-# ~/.bashrc に記述。
-RUN echo "source /opt/ros/humble/setup.sh" >> ~/.bashrc
-RUN echo "source /root/autonomous/install/setup.bash" >> ~/.bashrc
-RUN echo "export RCUTILS_LOGGING_USE_STDOUT=1" >> ~/.bashrc
-RUN echo "export RCUTILS_LOGGING_BUFFERED_STREAM=1" >> ~/.bashrc
-RUN echo "export RCUTILS_COLORIZED_OUTPUT=1" >> ~/.bashrc
-RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
-RUN echo 'export CYCLONEDDS_URI="<Disc><DefaultMulticastAddress>0.0.0.0</DefaultMulticastAddress></Disc>"' >> ~/.bashrc
+# CycloneDDS 設定ファイル
+RUN mkdir -p /etc/cyclonedds
+RUN printf '%s\n' \
+'<?xml version="1.0" encoding="UTF-8" ?>' \
+'<CycloneDDS xmlns="https://cdds.io/config">' \
+'  <Domain id="any">' \
+'    <General>' \
+'      <Interfaces>' \
+'        <NetworkInterface autodetermine="true" />' \
+'      </Interfaces>' \
+'      <AllowMulticast>true</AllowMulticast>' \
+'    </General>' \
+'  </Domain>' \
+'</CycloneDDS>' \
+> /etc/cyclonedds/cyclonedds.xml
 
-# install ros2 packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-ros-base=0.10.0-1* \
-    && rm -rf /var/lib/apt/lists/*
+ENV CYCLONEDDS_URI=file:///etc/cyclonedds/cyclonedds.xml
+
+# ワークスペース
+WORKDIR /home/${USERNAME}/autonomous
+RUN chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+# bashrc 設定
+RUN echo "source /opt/ros/humble/setup.bash" >> /home/${USERNAME}/.bashrc && \
+    echo "if [ -f /home/${USERNAME}/autonomous/install/setup.bash ]; then source /home/${USERNAME}/autonomous/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc && \
+    echo "export RCUTILS_LOGGING_USE_STDOUT=1" >> /home/${USERNAME}/.bashrc && \
+    echo "export RCUTILS_LOGGING_BUFFERED_STREAM=1" >> /home/${USERNAME}/.bashrc && \
+    echo "export RCUTILS_COLORIZED_OUTPUT=1" >> /home/${USERNAME}/.bashrc && \
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /home/${USERNAME}/.bashrc && \
+    echo "export CYCLONEDDS_URI=file:///etc/cyclonedds/cyclonedds.xml" >> /home/${USERNAME}/.bashrc
+
+USER ${USERNAME}
+SHELL ["/bin/bash", "-c"]
+
+CMD ["bash"]
