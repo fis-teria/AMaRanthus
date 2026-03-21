@@ -3,8 +3,19 @@ import math
 import random
 import sys
 import os
+import json
 from dataclasses import dataclass
 from typing import List
+
+
+# PyQtのimport前にIME関連の環境変数を準備する
+def configure_ime_environment() -> None:
+    os.environ.setdefault("QT_IM_MODULE", "ibus")
+    os.environ.setdefault("GTK_IM_MODULE", "ibus")
+    os.environ.setdefault("XMODIFIERS", "@im=ibus")
+
+
+configure_ime_environment()
 
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QUrl, QLocale
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF
@@ -17,6 +28,8 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QSizePolicy,
     QSplitter,
+    QLineEdit,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -85,6 +98,7 @@ class MapWidget(QWebEngineView):
                     top: 10px;
                     left: 10px;
                     z-index: 1000;
+                    display: none; /* 検索入力はQtネイティブ側を使用 */
                     background: white;
                     padding: 15px;
                     border-radius: 8px;
@@ -134,11 +148,35 @@ class MapWidget(QWebEngineView):
                     z-index: 1000;
                     font-family: 'Noto Sans CJK JP', Arial, sans-serif;
                     font-size: 12px;
-                    max-width: 250px;
+                    max-width: 320px;
                     display: none;
                 }
                 .route-info.show {
                     display: block;
+                }
+                .next-maneuver {
+                    margin: 8px 0;
+                    padding: 8px;
+                    border-radius: 6px;
+                    background: #f2f7ff;
+                    border: 1px solid #d6e5ff;
+                    line-height: 1.4;
+                }
+                .steps-title {
+                    margin: 8px 0 4px 0;
+                    font-size: 12px;
+                    font-weight: bold;
+                    color: #333;
+                }
+                .steps-list {
+                    margin: 0;
+                    padding-left: 18px;
+                    max-height: 170px;
+                    overflow-y: auto;
+                }
+                .steps-list li {
+                    margin-bottom: 4px;
+                    line-height: 1.35;
                 }
                 .leaflet-control-attribution {
                     font-size: 10px;
@@ -161,6 +199,9 @@ class MapWidget(QWebEngineView):
                 <h4>ルート情報</h4>
                 <p id="route-distance">距離: -- km</p>
                 <p id="route-time">時間: -- 分</p>
+                <div class="next-maneuver" id="next-maneuver">次の案内: --</div>
+                <div class="steps-title">案内ステップ</div>
+                <ol class="steps-list" id="steps-list"></ol>
             </div>
 
             <script>
@@ -182,9 +223,173 @@ class MapWidget(QWebEngineView):
                 let routingControl = null;
                 let startCoords = null;
                 let endCoords = null;
+                let currentPositionMarker = null;
+                let navigationTimer = null;
+                let activeRouteCoordinates = [];
+                let instructionMeta = [];
+                let stepElements = [];
+                let currentCoordIndex = 0;
 
                 // Geocoder（住所検索）インスタンス
                 const geocoder = L.Control.Geocoder.nominatim();
+
+                function clearNavigationState() {
+                    if (navigationTimer) {
+                        clearInterval(navigationTimer);
+                        navigationTimer = null;
+                    }
+                    activeRouteCoordinates = [];
+                    instructionMeta = [];
+                    currentCoordIndex = 0;
+                    stepElements.forEach(function(el) {
+                        el.style.background = '';
+                        el.style.fontWeight = '';
+                    });
+
+                    if (currentPositionMarker) {
+                        map.removeLayer(currentPositionMarker);
+                        currentPositionMarker = null;
+                    }
+                }
+
+                function setCurrentPositionMarker(latLng) {
+                    if (!currentPositionMarker) {
+                        currentPositionMarker = L.circleMarker(latLng, {
+                            radius: 8,
+                            color: '#1a73e8',
+                            fillColor: '#4da3ff',
+                            fillOpacity: 0.9,
+                            weight: 2
+                        }).addTo(map);
+                    } else {
+                        currentPositionMarker.setLatLng(latLng);
+                    }
+                }
+
+                function extractRouteCoordinates(route) {
+                    const coords = route.coordinates || [];
+                    return coords
+                        .map(function(c) {
+                            if (!c) {
+                                return null;
+                            }
+                            if (typeof c.lat === 'number' && typeof c.lng === 'number') {
+                                return L.latLng(c.lat, c.lng);
+                            }
+                            if (Array.isArray(c) && c.length >= 2) {
+                                return L.latLng(c[0], c[1]);
+                            }
+                            return null;
+                        })
+                        .filter(function(c) { return c !== null; });
+                }
+
+                function normalizeInstructionMeta(instructions, coordCount) {
+                    if (!instructions || instructions.length === 0 || coordCount < 1) {
+                        return [];
+                    }
+                    return instructions.map(function(step, idx) {
+                        let startIndex = 0;
+                        if (typeof step.index === 'number' && !Number.isNaN(step.index)) {
+                            startIndex = step.index;
+                        } else if (typeof step.waypointIndex === 'number' && !Number.isNaN(step.waypointIndex)) {
+                            startIndex = step.waypointIndex;
+                        } else {
+                            startIndex = idx === 0 ? 0 : Math.floor((idx / instructions.length) * (coordCount - 1));
+                        }
+                        startIndex = Math.max(0, Math.min(coordCount - 1, startIndex));
+                        return { step: step, startIndex: startIndex };
+                    }).sort(function(a, b) { return a.startIndex - b.startIndex; });
+                }
+
+                function distanceAlongRoute(fromIndex, toIndex) {
+                    if (activeRouteCoordinates.length < 2) {
+                        return 0;
+                    }
+                    const start = Math.max(0, Math.min(fromIndex, activeRouteCoordinates.length - 1));
+                    const end = Math.max(0, Math.min(toIndex, activeRouteCoordinates.length - 1));
+                    if (end <= start) {
+                        return 0;
+                    }
+                    let sum = 0;
+                    for (let i = start; i < end; i++) {
+                        sum += map.distance(activeRouteCoordinates[i], activeRouteCoordinates[i + 1]);
+                    }
+                    return sum;
+                }
+
+                function findNextInstructionIndex(coordIndex) {
+                    for (let i = 0; i < instructionMeta.length; i++) {
+                        if (instructionMeta[i].startIndex >= coordIndex) {
+                            return i;
+                        }
+                    }
+                    return -1;
+                }
+
+                function highlightInstructionStep(activeIndex) {
+                    stepElements.forEach(function(el, idx) {
+                        if (idx === activeIndex) {
+                            el.style.background = '#e8f0fe';
+                            el.style.fontWeight = 'bold';
+                        } else {
+                            el.style.background = '';
+                            el.style.fontWeight = '';
+                        }
+                    });
+                }
+
+                function updateRealtimeGuidance(coordIndex) {
+                    const nextManeuverEl = document.getElementById('next-maneuver');
+                    if (instructionMeta.length === 0) {
+                        nextManeuverEl.textContent = '次の案内: 案内情報なし';
+                        return;
+                    }
+
+                    const nextInstructionIdx = findNextInstructionIndex(coordIndex);
+                    if (nextInstructionIdx < 0) {
+                        nextManeuverEl.textContent = '次の案内: 目的地付近です。到着します。';
+                        highlightInstructionStep(-1);
+                        return;
+                    }
+
+                    const meta = instructionMeta[nextInstructionIdx];
+                    const distToTurn = distanceAlongRoute(coordIndex, meta.startIndex);
+                    const stepText = (meta.step && meta.step.text) ? meta.step.text : '直進してください';
+                    nextManeuverEl.textContent =
+                        '次の案内: ' + stepText + '（約' + formatDistanceMeters(distToTurn) + '先）';
+                    highlightInstructionStep(nextInstructionIdx);
+                }
+
+                function startRouteNavigation(route, instructions) {
+                    clearNavigationState();
+                    activeRouteCoordinates = extractRouteCoordinates(route);
+                    if (activeRouteCoordinates.length === 0) {
+                        return;
+                    }
+                    instructionMeta = normalizeInstructionMeta(instructions, activeRouteCoordinates.length);
+                    currentCoordIndex = 0;
+
+                    setCurrentPositionMarker(activeRouteCoordinates[0]);
+                    map.setView(activeRouteCoordinates[0], 16);
+                    updateRealtimeGuidance(currentCoordIndex);
+
+                    // 実機GPS未接続時のデモ移動。ルート上を自動で前進させる。
+                    navigationTimer = setInterval(function() {
+                        if (currentCoordIndex >= activeRouteCoordinates.length - 1) {
+                            clearInterval(navigationTimer);
+                            navigationTimer = null;
+                            updateRealtimeGuidance(activeRouteCoordinates.length - 1);
+                            return;
+                        }
+
+                        currentCoordIndex = Math.min(currentCoordIndex + 3, activeRouteCoordinates.length - 1);
+                        const currentLatLng = activeRouteCoordinates[currentCoordIndex];
+                        setCurrentPositionMarker(currentLatLng);
+                        map.panTo(currentLatLng, { animate: true, duration: 0.7 });
+                        updateRealtimeGuidance(currentCoordIndex);
+                    }, 1000);
+                }
 
                 // 検索関数
                 function searchLocation(query, callback) {
@@ -235,33 +440,38 @@ class MapWidget(QWebEngineView):
                 }
 
                 // ルート検索関数
-                function calculateRoute() {
-                    if (!startCoords || !endCoords) {
+                function calculateRoute(start, end) {
+                    if (!start || !end) {
                         alert('出発地と目的地の両方を設定してください。');
                         return;
                     }
+
+                    clearNavigationState();
 
                     // 既存のルートを削除
                     if (routingControl) {
                         map.removeControl(routingControl);
                     }
 
-                    // OpenRouteServiceを使用したルート検索
+                    // OSRMv1を使用したルート検索
+                    // jaローカライズが無い環境ではenにフォールバックする
+                    const routeLanguage =
+                        (L.Routing.Localization && L.Routing.Localization['ja']) ? 'ja' : 'en';
+
                     routingControl = L.Routing.control({
                         waypoints: [
-                            L.latLng(startCoords.lat, startCoords.lng),
-                            L.latLng(endCoords.lat, endCoords.lng)
+                            L.latLng(start.lat, start.lng),
+                            L.latLng(end.lat, end.lng)
                         ],
                         routeWhileDragging: false,
                         createMarker: function() { return null; }, // カスタムマーカー使用のため
-                        router: L.Routing.openrouteservice({
-                            serviceUrl: 'https://api.openrouteservice.org/v2/directions/',
-                            profile: 'driving-car',
-                            api_key: null, // 無料枠使用（APIキー不要）
-                            timeout: 30 * 1000,
+                        router: L.Routing.osrmv1({
+                            // デモサーバ警告を避けるため、公開OSRM互換エンドポイントを使用
+                            serviceUrl: 'https://routing.openstreetmap.de/routed-car/route/v1',
+                            profile: 'driving'
                         }),
                         formatter: new L.Routing.Formatter({
-                            language: 'ja'
+                            language: routeLanguage
                         }),
                         summaryTemplate: '<h3>{name}</h3><p>{distance}, {time}</p>',
                     }).addTo(map);
@@ -269,7 +479,9 @@ class MapWidget(QWebEngineView):
                     // ルート計算完了時のイベント
                     routingControl.on('routesfound', function(e) {
                         const routes = e.routes;
-                        const summary = routes[0].summary;
+                        const route = routes[0];
+                        const summary = route.summary;
+                        const instructions = route.instructions || [];
 
                         // ルート情報を表示
                         const routeInfo = document.getElementById('route-info');
@@ -278,6 +490,8 @@ class MapWidget(QWebEngineView):
 
                         document.getElementById('route-distance').textContent = '距離: ' + distanceKm + ' km';
                         document.getElementById('route-time').textContent = '時間: ' + timeMin + ' 分';
+                        updateRouteGuidance(instructions);
+                        startRouteNavigation(route, instructions);
                         routeInfo.classList.add('show');
 
                         console.log('ルート検索完了:', summary);
@@ -285,10 +499,92 @@ class MapWidget(QWebEngineView):
 
                     // エラー時のイベント
                     routingControl.on('routingerror', function(e) {
+                        clearNavigationState();
                         console.error('ルート検索エラー:', e.error);
                         alert('ルート検索に失敗しました。ネットワーク接続を確認してください。');
                     });
                 }
+
+                function formatDistanceMeters(distanceMeters) {
+                    if (!distanceMeters || distanceMeters < 1) {
+                        return '0 m';
+                    }
+                    if (distanceMeters >= 1000) {
+                        return (distanceMeters / 1000).toFixed(1) + ' km';
+                    }
+                    return Math.round(distanceMeters) + ' m';
+                }
+
+                function formatDurationSeconds(durationSeconds) {
+                    if (!durationSeconds || durationSeconds < 1) {
+                        return '0分';
+                    }
+                    const totalMin = Math.round(durationSeconds / 60);
+                    if (totalMin < 60) {
+                        return totalMin + '分';
+                    }
+                    const h = Math.floor(totalMin / 60);
+                    const m = totalMin % 60;
+                    return h + '時間' + m + '分';
+                }
+
+                function updateRouteGuidance(instructions) {
+                    const nextManeuverEl = document.getElementById('next-maneuver');
+                    const stepsListEl = document.getElementById('steps-list');
+                    stepsListEl.innerHTML = '';
+                    stepElements = [];
+
+                    if (!instructions || instructions.length === 0) {
+                        nextManeuverEl.textContent = '次の案内: 取得できませんでした';
+                        return;
+                    }
+
+                    const first = instructions[0];
+                    const firstText = first.text || '直進してください';
+                    nextManeuverEl.textContent = '次の案内: ' + firstText;
+
+                    instructions.forEach(function(step) {
+                        const li = document.createElement('li');
+                        const text = step.text || '案内情報なし';
+                        const dist = formatDistanceMeters(step.distance || 0);
+                        const time = formatDurationSeconds(step.time || 0);
+                        li.textContent = text + '（' + dist + ' / 約' + time + '）';
+                        stepsListEl.appendChild(li);
+                        stepElements.push(li);
+                    });
+                }
+
+                function executeRouteSearch(startQuery, endQuery) {
+                    if (!startQuery || !endQuery) {
+                        alert('出発地と目的地の両方を入力してください。');
+                        return;
+                    }
+
+                    const searchButton = document.getElementById('search-route');
+                    searchButton.disabled = true;
+                    searchButton.textContent = '検索中...';
+
+                    // 出発地検索
+                    searchLocation(startQuery, function(startResult) {
+                        setMarker(startResult, 'start');
+
+                        // 目的地検索
+                        searchLocation(endQuery, function(endResult) {
+                            setMarker(endResult, 'end');
+                            setTimeout(function() {
+                                calculateRoute(startResult, endResult);
+                            }, 500);
+
+                            searchButton.disabled = false;
+                            searchButton.textContent = 'ルート検索';
+                        });
+                    });
+                }
+
+                // Qtネイティブ入力から呼び出すための関数
+                window.searchRouteFromNative = function(startQuery, endQuery) {
+                    executeRouteSearch((startQuery || '').trim(), (endQuery || '').trim());
+                };
 
                 // IMEイベント処理（日本語入力対応）
                 function setupIMEHandling(inputElement) {
@@ -341,32 +637,7 @@ class MapWidget(QWebEngineView):
                 document.getElementById('search-route').addEventListener('click', function() {
                     const startQuery = document.getElementById('start-search').value.trim();
                     const endQuery = document.getElementById('end-search').value.trim();
-
-                    if (!startQuery || !endQuery) {
-                        alert('出発地と目的地の両方を入力してください。');
-                        return;
-                    }
-
-                    // ボタンを無効化
-                    this.disabled = true;
-                    this.textContent = '検索中...';
-
-                    // 出発地検索
-                    searchLocation(startQuery, function(startResult) {
-                        setMarker(startResult, 'start');
-
-                        // 目的地検索
-                        searchLocation(endQuery, function(endResult) {
-                            setMarker(endResult, 'end');
-
-                            // ルート検索実行
-                            setTimeout(calculateRoute, 500);
-
-                            // ボタンを有効化
-                            document.getElementById('search-route').disabled = false;
-                            document.getElementById('search-route').textContent = 'ルート検索';
-                        });
-                    });
+                    executeRouteSearch(startQuery, endQuery);
                 });
 
                 // Enterキーでも検索可能
@@ -408,6 +679,13 @@ class MapWidget(QWebEngineView):
         </html>
         """
         self.setHtml(html_content)
+
+    def search_route(self, start_query: str, end_query: str) -> None:
+        script = (
+            f"window.searchRouteFromNative({json.dumps(start_query)},"
+            f" {json.dumps(end_query)});"
+        )
+        self.page().runJavaScript(script)
 
 
 # =========================
@@ -666,8 +944,33 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # 左
+        # 左: ルート検索バー + 地図
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(6, 6, 6, 6)
+        left_layout.setSpacing(6)
+
+        route_bar = QHBoxLayout()
+        self.start_input = QLineEdit()
+        self.end_input = QLineEdit()
+        self.search_button = QPushButton("ルート検索")
+
+        self.start_input.setPlaceholderText("出発地を入力（例: 東京駅）")
+        self.end_input.setPlaceholderText("目的地を入力（例: 渋谷駅）")
+        self.start_input.setClearButtonEnabled(True)
+        self.end_input.setClearButtonEnabled(True)
+
+        route_bar.addWidget(self.start_input, 1)
+        route_bar.addWidget(self.end_input, 1)
+        route_bar.addWidget(self.search_button, 0)
+
         self.map_widget = MapWidget()
+        left_layout.addLayout(route_bar)
+        left_layout.addWidget(self.map_widget, 1)
+
+        self.search_button.clicked.connect(self.on_search_route)
+        self.start_input.returnPressed.connect(self.on_search_route)
+        self.end_input.returnPressed.connect(self.on_search_route)
 
         # 右
         right_container = QWidget()
@@ -681,7 +984,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.status_panel, 0)
         right_layout.addWidget(self.sensor_view, 1)
 
-        splitter.addWidget(self.map_widget)
+        splitter.addWidget(left_container)
         splitter.addWidget(right_container)
         splitter.setSizes([850, 650])
 
@@ -692,6 +995,11 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_demo_data)
         self.timer.start(100)  # 10Hz
+
+    def on_search_route(self) -> None:
+        start_query = self.start_input.text().strip()
+        end_query = self.end_input.text().strip()
+        self.map_widget.search_route(start_query, end_query)
 
     def generate_fake_scan(self) -> List[QPointF]:
         points = []
@@ -771,13 +1079,6 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    # 日本語表示と入力のための環境設定
-    os.environ['QT_QPA_PLATFORMTHEME'] = 'gtk2'
-    os.environ['LANG'] = 'ja_JP.UTF-8'
-    os.environ['LC_ALL'] = 'ja_JP.UTF-8'
-    os.environ['QT_IM_MODULE'] = 'ibus'  # または 'fcitx' など、使用しているIMEに合わせて
-    os.environ['XMODIFIERS'] = '@im=ibus'
-
     # QApplication初期化前にロケール設定
     QLocale.setDefault(QLocale(QLocale.Japanese, QLocale.Japan))
 
