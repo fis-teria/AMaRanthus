@@ -5,6 +5,13 @@ CURRENT_DIR="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="${SCRIPT_DIR}/docker"
 
+cleanup() {
+    xhost -local:root >/dev/null 2>&1 || true
+    cd "${SCRIPT_DIR}" >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT INT TERM
+
 cd "${DOCKER_DIR}"
 
 # X11許可
@@ -73,13 +80,40 @@ else
     echo "[INFO] 通常のUbuntu環境を検出しました。Ubuntu向けオプションで起動します。"
 
     UBUNTU_ARGS=()
+    HOST_NVIDIA_OK=false
+    DOCKER_GPU_OK=false
 
-    # NVIDIA Container Toolkit が使えるなら runtime を追加
-    if docker info 2>/dev/null | grep -qi "nvidia"; then
-        echo "[INFO] NVIDIA runtime を検出しました。GPUオプションを有効化します。"
-        UBUNTU_ARGS+=(--gpus all)
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        if nvidia-smi >/dev/null 2>&1; then
+            HOST_NVIDIA_OK=true
+            echo "[INFO] ホストの NVIDIA ドライバへアクセスできます。"
+        else
+            echo "[WARN] ホストで nvidia-smi が失敗しました。NVIDIA ドライバが未起動か、OS 側から GPU が見えていません。"
+        fi
     else
-        echo "[INFO] NVIDIA runtime は未検出です。GPUオプションなしで起動します。"
+        echo "[WARN] nvidia-smi が見つかりません。ホスト側の NVIDIA ドライバ導入状況を確認してください。"
+    fi
+
+    # Docker 側で GPU オプションが使えるか確認
+    if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -qi 'nvidia'; then
+        DOCKER_GPU_OK=true
+        echo "[INFO] Docker の NVIDIA runtime を検出しました。"
+    elif docker info 2>/dev/null | grep -qi 'nvidia'; then
+        DOCKER_GPU_OK=true
+        echo "[INFO] Docker の NVIDIA 関連設定を検出しました。"
+    fi
+
+    if [[ "${HOST_NVIDIA_OK}" == true && "${DOCKER_GPU_OK}" == true ]]; then
+        echo "[INFO] GPU オプションを有効化します。"
+        UBUNTU_ARGS+=(
+          --gpus all
+          -e NVIDIA_VISIBLE_DEVICES=all
+          -e NVIDIA_DRIVER_CAPABILITIES=all
+        )
+    elif [[ "${HOST_NVIDIA_OK}" == true ]]; then
+        echo "[WARN] ホストの GPU は利用可能ですが、Docker 側の NVIDIA runtime / toolkit を検出できませんでした。"
+    else
+        echo "[INFO] GPU 条件を満たさないため、GPU オプションなしで起動します。"
     fi
 
     docker run \
@@ -88,7 +122,3 @@ else
       ros2-humble \
       bash -c "cd /root/autonomous && exec bash"
 fi
-
-xhost -local:root
-
-cd "${SCRIPT_DIR}"

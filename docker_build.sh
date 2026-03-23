@@ -35,6 +35,7 @@ fi
 if is_jetson; then
   echo "[INFO] Jetson/JetPack を検出しました。ros-humble-nvidia をビルドします。"
   LRS_VERSION="${LRS_VERSION:-2.56.4}"
+  LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION:-v1.2.4}"
 
   # Jetson 用は「現在のディレクトリ」に Dockerfile がある前提（なければエラー）
   JETSON_CTX="${SCRIPT_DIR}"
@@ -45,19 +46,25 @@ if is_jetson; then
     --network=host \
     --build-arg BUILD_LRS_VIEWER=1 \
     --build-arg LRS_VERSION="${LRS_VERSION}" \
+    --build-arg LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION}" \
     -t ros2-humble-nvidia \
     "${JETSON_CTX}"
 
 else
   echo "[INFO] 通常の Ubuntu 環境と判断しました。ros2-humble をビルドします。"
+  INSTALL_CUDA="${INSTALL_CUDA:-1}"
+  LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION:-v1.2.4}"
 
   UBUNTU_CTX="${SCRIPT_DIR}"
   [[ -d "${UBUNTU_CTX}" ]] || die "docker ディレクトリが見つかりません（${UBUNTU_CTX}）"
   [[ -f "${UBUNTU_CTX}/Dockerfile" ]] || die "Dockerfile が ${UBUNTU_CTX}/Dockerfile に見つかりません。"
 
-  docker build \
+  "${BUILD[@]}" \
+    --network=host \
     --build-arg UID="$(id -u)" \
     --build-arg GID="$(id -g)" \
+    --build-arg INSTALL_CUDA="${INSTALL_CUDA}" \
+    --build-arg LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION}" \
     -t ros2-humble \
     "${UBUNTU_CTX}"
 fi

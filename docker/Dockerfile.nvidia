@@ -7,6 +7,7 @@ FROM nvcr.io/nvidia/l4t-base:r36.2.0
 ENV DEBIAN_FRONTEND=noninteractive
 ARG UID=1000
 ARG GID=1000
+ARG LIVOX_SDK2_VERSION=v1.2.4
 
 # 開発に必要な OS パッケージのみ
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,6 +44,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-desktop \
       ros-dev-tools \
+      ros-humble-gazebo-ros-pkgs \
       ros-humble-joint-state-publisher \
       ros-humble-rqt-* \
       ros-humble-pcl-* \
@@ -170,6 +172,14 @@ RUN git clone --depth 1 --branch "v${LRS_VERSION}" https://github.com/IntelRealS
     cmake --install /tmp/librealsense/build && \
     ldconfig && \
     rm -rf /tmp/librealsense
+
+# Livox-SDK2 を /usr/local に導入して livox_ros_driver2 の前提を満たす
+RUN git clone --depth 1 --branch ${LIVOX_SDK2_VERSION} https://github.com/Livox-SDK/Livox-SDK2.git /tmp/Livox-SDK2 && \
+    cmake -S /tmp/Livox-SDK2 -B /tmp/Livox-SDK2/build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /tmp/Livox-SDK2/build -j"$(nproc)" && \
+    cmake --install /tmp/Livox-SDK2/build && \
+    ldconfig && \
+    rm -rf /tmp/Livox-SDK2
 
 # /usr/local/lib をリンカに登録（librealsense 実行時用）
 RUN printf '/usr/local/lib\n' > /etc/ld.so.conf.d/zz-local-librealsense.conf && ldconfig

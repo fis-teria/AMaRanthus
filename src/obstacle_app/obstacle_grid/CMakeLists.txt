@@ -3,7 +3,12 @@ project(obstacle_grid)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-O3 -march=armv8-a+crypto -mtune=cortex-a78)  # Orin Nano最適化の一例
+add_compile_options(-O3)
+
+# Keep Jetson/Orin-specific tuning only on aarch64 so x86_64 dev containers can build.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)")
+  add_compile_options(-march=armv8-a+crypto -mtune=cortex-a78)
+endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)

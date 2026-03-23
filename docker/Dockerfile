@@ -12,6 +12,10 @@ ENV RCUTILS_COLORIZED_OUTPUT=1
 ARG UID=1000
 ARG GID=1000
 ARG USERNAME=admin
+ARG INSTALL_CUDA=1
+ARG INSTALL_NVIDIA_SMI=1
+ARG LIBREALSENSE_VERSION=v2.55.1
+ARG LIVOX_SDK2_VERSION=v1.2.4
 
 # 基本ツール、開発ツール、ネットワーク確認ツール、便利ツール
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -59,10 +63,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglu1-mesa-dev \
     libssl-dev \
     libudev-dev \
+    libapr1-dev \
     libx11-dev \
     libxi-dev \
     libxt-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# CUDA Toolkit は通常 Ubuntu イメージでも任意で入れられるようにしておく。
+RUN if [ "${INSTALL_CUDA}" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends nvidia-cuda-toolkit && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# nvidia-smi はドライバ系ユーザー空間パッケージに含まれる。Ubuntu の利用可能版から順に試す。
+RUN if [ "${INSTALL_NVIDIA_SMI}" = "1" ]; then \
+      apt-get update && \
+      for pkg in nvidia-utils-590 nvidia-utils-580 nvidia-utils-570 nvidia-utils-550 nvidia-utils-545 nvidia-utils-535; do \
+        if apt-get install -y --no-install-recommends "${pkg}"; then \
+          break; \
+        fi; \
+      done && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+ENV CUDA_HOME=/usr
+ENV CUDAToolkit_ROOT=/usr
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 # 一般ユーザーを追加（ホストUID/GIDに合わせやすくする）
 RUN groupadd -g ${GID} ${USERNAME} && \
@@ -73,6 +102,7 @@ RUN groupadd -g ${GID} ${USERNAME} && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-desktop \
     ros-humble-cv-bridge \
+    ros-humble-gazebo-ros-pkgs \
     ros-humble-pcl-conversions \
     ros-humble-teleop-twist-keyboard \
     ros-humble-diagnostic-updater \
@@ -95,16 +125,22 @@ RUN colcon mixin add default \
 
 # librealsense ビルド
 WORKDIR /opt
-RUN git clone https://github.com/IntelRealSense/librealsense.git && \
-    cd librealsense && \
-    git checkout v2.55.1 && \
-    mkdir -p build && cd build && \
-    cmake .. \
+RUN git clone --depth 1 --branch ${LIBREALSENSE_VERSION} https://github.com/IntelRealSense/librealsense.git /tmp/librealsense && \
+    cmake -S /tmp/librealsense -B /tmp/librealsense/build \
       -DBUILD_EXAMPLES=true \
       -DBUILD_GRAPHICAL_EXAMPLES=true && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig
+    cmake --build /tmp/librealsense/build -j"$(nproc)" && \
+    cmake --install /tmp/librealsense/build && \
+    ldconfig && \
+    rm -rf /tmp/librealsense
+
+# Livox-SDK2 を /usr/local に導入して livox_ros_driver2 がそのままビルドできるようにする
+RUN git clone --depth 1 --branch ${LIVOX_SDK2_VERSION} https://github.com/Livox-SDK/Livox-SDK2.git /tmp/Livox-SDK2 && \
+    cmake -S /tmp/Livox-SDK2 -B /tmp/Livox-SDK2/build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /tmp/Livox-SDK2/build -j"$(nproc)" && \
+    cmake --install /tmp/Livox-SDK2/build && \
+    ldconfig && \
+    rm -rf /tmp/Livox-SDK2
 
 # CycloneDDS 設定ファイル
 RUN mkdir -p /etc/cyclonedds
