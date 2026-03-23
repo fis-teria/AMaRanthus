@@ -20,6 +20,9 @@
 - `realsense2_camera_msgs` (`src/drivers/realsense-ros/realsense2_camera_msgs/package.xml`) - RealSense camera_msgs package containing realsense camera messages definitions
 - `realsense2_description` (`src/drivers/realsense-ros/realsense2_description/package.xml`) - RealSense description package for Intel 3D D400 cameras
 
+### src/drivers
+- `pointcloud_to_laserscan` (`src/drivers/pointcloud_to_laserscan/package.xml`) - Converts a 3D point cloud into a 2D laser scan and can also republish LaserScan as PointCloud2
+
 ### src/img_proc/mediapipe_ros2_suite/src
 - `mediapipe_ros2_interfaces` (`src/img_proc/mediapipe_ros2_suite/src/mediapipe_ros2_interfaces/package.xml`) - Interfaces (msgs) for Mediapipe ROS2 suite
 - `mediapipe_ros2_node` (`src/img_proc/mediapipe_ros2_suite/src/mediapipe_ros2_node/package.xml`) - Assets (models/launch/rviz) for Mediapipe ROS2 suite
@@ -91,3 +94,5 @@
 ## Notes
 - 一部パッケージは `package.xml` の説明が未設定（`TODO` / `description未設定`）です。
 - 実行・ビルド時はプロジェクトルールに従い、Docker内で `colcon build --symlink-install` を使用します。
+- Docker イメージには `gazebo_ros_pkgs` を含め、`nav2_system_tests` の依存を満たすようにしています。
+- ルートの `build.sh` はメモリ安全側の設定で `colcon` を順次ビルドするように調整しています。

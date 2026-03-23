@@ -21,3 +21,7 @@
 [submodule "src/slam/navigation2"]
 	path = src/slam/navigation2
 	url = git@github.com:fis-teria/navigation2.git
+
+[submodule "src/drivers/pointcloud_to_laserscan"]
+	path = src/drivers/pointcloud_to_laserscan
+	url = git@github.com:fis-teria/pointcloud_to_laserscan.git
