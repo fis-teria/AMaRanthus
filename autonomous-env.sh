@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eE
 
 CURRENT_DIR="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,7 +10,19 @@ cleanup() {
     cd "${SCRIPT_DIR}" >/dev/null 2>&1 || true
 }
 
-trap cleanup EXIT INT TERM
+pause_on_error() {
+    local status=$?
+    cleanup
+    if [[ ${status} -ne 0 ]]; then
+        echo
+        echo "[ERROR] autonomous-env.sh failed with exit code ${status}."
+        if [[ -t 0 && -t 1 && "${AMARANTHUS_NO_ERROR_PAUSE:-0}" != "1" ]]; then
+            read -r -p "Press Enter to close..." _
+        fi
+    fi
+}
+
+trap pause_on_error EXIT INT TERM
 
 cd "${DOCKER_DIR}"
 
