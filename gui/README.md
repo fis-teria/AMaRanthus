@@ -6,9 +6,10 @@
 
 - **地図表示**: OpenStreetMap + Leafletを使用（APIキー不要・無料）
 - **ルート検索**: OpenRouteServiceを使用（APIキー不要・無料）
-- ステータス表示（車速、前方最短距離、検知人数、検知車両数、モード、GPS）
+- ステータス表示（車速、前方最短距離、障害物数、モード、GPS）
 - レーザースキャンデータの可視化
-- 検知された物体（人、車）の表示
+- lane / road edge のオーバーレイ表示
+- 検知された obstacle マーカー表示
 
 ## 地図について
 
@@ -44,6 +45,67 @@ uv sync
 
 ```bash
 uv run main.py
+```
+
+ワークスペース直下から簡単に起動したい場合は、起動スクリプトも使えます。
+
+```bash
+./gui/run_gui.sh
+```
+
+デモデータではなく ROS2 トピックを読みたい場合は、起動時に切り替えできます。
+
+```bash
+uv run main.py --data-source ros2
+```
+
+ROS2 モードでは、実行環境に `rclpy`、`sensor_msgs`、`std_msgs` が入っている必要があります。
+
+使用するトピック名も引数で上書きできます。
+
+```bash
+uv run main.py \
+  --data-source ros2 \
+  --ros-scan-topic /scan_surroundings \
+  --ros-lane-topic /scan \
+  --ros-objects-topic /detected_objects \
+  --ros-speed-topic /vehicle/speed_kmh \
+  --ros-mode-topic /vehicle/mode \
+  --ros-gps-topic /vehicle/gps_status
+```
+
+`--ros-objects-topic` は `std_msgs/String` で、JSON 配列を想定しています。各要素は以下の形式です。
+
+```json
+[
+  {"x_m": 1.2, "y_m": 5.6, "kind": "obstacle"},
+  {"x_m": -2.4, "y_m": 9.1, "kind": "obstacle"}
+]
+```
+
+そのほかの想定メッセージ型:
+
+- `--ros-scan-topic`: `sensor_msgs/msg/LaserScan`
+- `--ros-lane-topic`: `sensor_msgs/msg/LaserScan`
+- `--ros-speed-topic`: `std_msgs/msg/Float32`
+- `--ros-mode-topic`: `std_msgs/msg/String`
+- `--ros-gps-topic`: `std_msgs/msg/String`
+
+GUI の見た目は `gui/config/ui.yaml` で調整できます。必要なら `--ui-config` で別ファイルも指定できます。
+
+```bash
+uv run main.py --ui-config /path/to/ui.yaml
+```
+
+表示レンジを速度に応じて変えたい場合は、`gui/config/ui.yaml` の以下を調整してください。
+
+```yaml
+render:
+  dynamic_range_enabled: true
+  dynamic_range_min_m: 12.0
+  dynamic_range_max_m: 35.0
+  dynamic_range_speed_min_kmh: 0.0
+  dynamic_range_speed_max_kmh: 80.0
 ```
 
 ## 地図の操作

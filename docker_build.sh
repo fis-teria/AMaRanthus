@@ -5,7 +5,20 @@
 
 #cd ..
 
-set -euo pipefail
+set -eEuo pipefail
+
+pause_on_error() {
+  local status=$?
+  if [[ ${status} -ne 0 ]]; then
+    echo
+    echo "[ERROR] docker_build.sh failed with exit code ${status}."
+    if [[ -t 0 && -t 1 && "${AMARANTHUS_NO_ERROR_PAUSE:-0}" != "1" ]]; then
+      read -r -p "Press Enter to close..." _
+    fi
+  fi
+}
+
+trap pause_on_error EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker"
 cd "${SCRIPT_DIR}"

@@ -25,3 +25,8 @@
 [submodule "src/drivers/pointcloud_to_laserscan"]
 	path = src/drivers/pointcloud_to_laserscan
 	url = git@github.com:fis-teria/pointcloud_to_laserscan.git
+
+[submodule "src/adas/livox_lane_detection"]
+	path = src/adas/livox_lane_detection
+	url = git@github.com:fis-teria/livox_lane_detection.git
+	branch = feature/ros2_live_integration

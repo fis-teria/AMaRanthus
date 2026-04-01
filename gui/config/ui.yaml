@@ -1,0 +1,13 @@
+render:
+  max_range_m: 20.0
+  dynamic_range_enabled: true
+  dynamic_range_min_m: 15.0
+  dynamic_range_max_m: 80.0
+  dynamic_range_speed_min_kmh: 0.0
+  dynamic_range_speed_max_kmh: 120.0
+  scan_point_size: 3
+  lane_point_size: 4
+  obstacle_marker_width_px: 24.0
+  obstacle_marker_height_px: 14.0
+  obstacle_label_dx_px: 14.0
+  obstacle_label_dy_px: -8.0
