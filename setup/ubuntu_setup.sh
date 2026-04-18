@@ -140,6 +140,15 @@ run_as_target_user() {
   fi
 }
 
+sync_submodules() {
+  if [[ ! -f "${REPO_ROOT}/.gitmodules" ]]; then
+    return
+  fi
+
+  log "Initializing and updating git submodules"
+  git -C "${REPO_ROOT}" submodule update --init --recursive
+}
+
 detect_ubuntu() {
   if [[ ! -f /etc/os-release ]]; then
     echo "[ERROR] /etc/os-release not found. This script only supports Ubuntu." >&2
@@ -511,6 +520,7 @@ EOF
 main() {
   detect_ubuntu
 
+  sync_submodules
   install_repository_prerequisites
   require_command curl
   configure_ros2_repository

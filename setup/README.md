@@ -17,6 +17,14 @@
 
 ## 使い方
 
+まずは submodule ごと clone するのを推奨します。
+
+```bash
+git clone --recurse-submodules git@github.com:fis-teria/AMaRanthus.git
+```
+
+通常の `git clone` を使った場合でも、`setup/ubuntu_setup.sh` が内部で `git submodule update --init --recursive` を実行するため、セットアップ時に補完されます。
+
 最小構成:
 
 ```bash

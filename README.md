@@ -2,6 +2,20 @@
 
 このリポジトリに含まれる主要コンポーネントと、`src`配下のROSパッケージ一覧です。
 
+## Clone
+
+submodule を含めて取得する場合は、次を推奨します。
+
+```bash
+git clone --recurse-submodules git@github.com:fis-teria/AMaRanthus.git
+```
+
+通常の `git clone` を使った場合は、clone 後に次を実行してください。
+
+```bash
+git submodule update --init --recursive
+```
+
 ## Top-Level Overview
 - GUI: `gui/` (PyQt5 + PyQtWebEngine)
 - ROS2 packages: `src/`
@@ -100,4 +114,5 @@
 ## Ubuntu Local Setup
 - `setup/ubuntu_setup.sh` で、`docker/Dockerfile` に近い開発環境を Ubuntu ホストへ再現できます。
 - CUDA を使う場合は `--with-cuda`、Docker から GPU を使う場合は `--with-nvidia-container-toolkit` を指定できます。
+- `setup/ubuntu_setup.sh` は `git submodule update --init --recursive` も実行します。
 - 詳細は [setup/README.md](/home/hellbore/AMaRanthus/setup/README.md) を参照してください。
