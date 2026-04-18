@@ -41,6 +41,12 @@
 uv sync
 ```
 
+Ubuntu / WSL では、ルートの `setup/ubuntu_setup.sh` を使うと `uv` と `ibus-mozc` もまとめてセットアップできます。
+
+```bash
+./setup/ubuntu_setup.sh
+```
+
 ### 2. 実行
 
 ```bash
@@ -173,16 +179,14 @@ Linux環境では、日本語表示のために以下のフォントが自動的
 アプリケーションの検索ボックスで日本語入力ができない場合、以下の手順を試してください：
 
 ### IME設定の確認
-1. **IBus IMEのインストールと設定**:
+1. **推奨**:
+   ルートの `setup/ubuntu_setup.sh` を実行してください。WSL の場合は `.bashrc` 経由で `ubuntu_env.sh` が読み込まれ、`ibus-daemon` の起動と `mozc-jp` の選択まで自動化されます。
+
+2. **手動で設定する場合**:
    ```bash
    sudo apt update
-   sudo apt install ibus-mozc
+   sudo apt install ibus ibus-mozc dbus-x11 im-config
    im-config -n ibus
-   ```
-
-2. **環境変数の設定**:
-   アプリケーション起動前に以下の環境変数を設定してください：
-   ```bash
    export QT_IM_MODULE=ibus
    export XMODIFIERS=@im=ibus
    export GTK_IM_MODULE=ibus

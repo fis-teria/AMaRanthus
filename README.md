@@ -96,3 +96,8 @@
 - 実行・ビルド時はプロジェクトルールに従い、Docker内で `colcon build --symlink-install` を使用します。
 - Docker イメージには `gazebo_ros_pkgs` を含め、`nav2_system_tests` の依存を満たすようにしています。
 - ルートの `build.sh` はメモリ安全側の設定で `colcon` を順次ビルドするように調整しています。
+
+## Ubuntu Local Setup
+- `setup/ubuntu_setup.sh` で、`docker/Dockerfile` に近い開発環境を Ubuntu ホストへ再現できます。
+- CUDA を使う場合は `--with-cuda`、Docker から GPU を使う場合は `--with-nvidia-container-toolkit` を指定できます。
+- 詳細は [setup/README.md](/home/hellbore/AMaRanthus/setup/README.md) を参照してください。
