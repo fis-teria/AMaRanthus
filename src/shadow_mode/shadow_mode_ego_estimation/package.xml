@@ -1,18 +1,24 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>adas_bringup</name>
+  <name>shadow_mode_ego_estimation</name>
   <version>0.0.1</version>
-  <description>Bringup package for ADAS-related sensor and conversion nodes.</description>
+  <description>Shadow-mode ego motion estimation from FAST-LIO odometry.</description>
+
   <maintainer email="you@example.com">you</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>livox_lane_detection</exec_depend>
-  <exec_depend>livox_ros_driver2</exec_depend>
-  <exec_depend>pointcloud_to_laserscan</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

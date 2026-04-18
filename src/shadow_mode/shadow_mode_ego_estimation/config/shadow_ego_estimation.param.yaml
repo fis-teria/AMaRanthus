@@ -1,0 +1,10 @@
+shadow_ego_estimation:
+  ros__parameters:
+    input_odom_topic: /Odometry
+    output_frame: ""
+    path_buffer_size: 200
+    min_dt: 0.01
+    min_speed_for_curvature: 0.5
+    speed_smoothing_gain: 0.2
+    yaw_rate_smoothing_gain: 0.2
+    publish_debug_markers: true

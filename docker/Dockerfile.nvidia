@@ -46,14 +46,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-dev-tools \
       ros-humble-gazebo-ros-pkgs \
       ros-humble-joint-state-publisher \
+      ros-humble-pcl-conversions \
+      ros-humble-pcl-ros \
       ros-humble-rqt-* \
       ros-humble-pcl-* \
+      ros-humble-std-srvs \
+      ros-humble-tf2-geometry-msgs \
+      ros-humble-tf2-sensor-msgs \
       ros-humble-teleop-twist-keyboard \
       ros-humble-diagnostic-updater \
       ros-humble-rtabmap\* \
       ros-humble-rmw-cyclonedds-cpp \
       ros-humble-rmw-fastrtps-cpp \
       ros-humble-test-msgs \
+      libeigen3-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # Python 系ツールは pip で統一（APT と重複させない）

@@ -108,7 +108,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-laser-geometry \
     ros-humble-message-filters \
     ros-humble-pcl-conversions \
+    ros-humble-pcl-ros \
     ros-humble-rosbag2 \
+    ros-humble-std-srvs \
+    ros-humble-tf2-geometry-msgs \
     ros-humble-tf2-sensor-msgs \
     ros-humble-tf2-msgs \
     ros-humble-teleop-twist-keyboard \
@@ -118,6 +121,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rmw-cyclonedds-cpp \
     ros-humble-rtabmap \
     ros-humble-rtabmap-ros \
+    libeigen3-dev \
     libpcl-dev \
     && rm -rf /var/lib/apt/lists/*
 

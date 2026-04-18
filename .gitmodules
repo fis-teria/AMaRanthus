@@ -30,3 +30,7 @@
 	path = src/adas/livox_lane_detection
 	url = git@github.com:fis-teria/livox_lane_detection.git
 	branch = feature/ros2_live_integration
+
+[submodule "src/slam/fast_lio_ros2"]
+	path = src/slam/fast_lio_ros2
+	url = git@github.com:fis-teria/FAST_LIO_ROS2.git
