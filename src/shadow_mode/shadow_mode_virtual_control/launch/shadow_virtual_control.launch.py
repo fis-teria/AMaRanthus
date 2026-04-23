@@ -12,7 +12,9 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {
+                        "input_mode": "scan",
                         "input_scan_topic": "/livox/lane_detection/scan",
+                        "input_pointcloud_topic": "/livox/lidar",
                         "output_frame": "",
                         "wheelbase": 2.7,
                         "lookahead_distance": 6.0,
@@ -26,6 +28,9 @@ def generate_launch_description():
                         "publish_debug_markers": True,
                         "warning_missing_boundary_weight": 0.7,
                         "warning_curvature_weight": 0.3,
+                        "pointcloud_z_min": -1.5,
+                        "pointcloud_z_max": 1.5,
+                        "pointcloud_stride": 1,
                     }
                 ],
             )

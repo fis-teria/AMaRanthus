@@ -1,0 +1,51 @@
+shadow_ego_estimation:
+  ros__parameters:
+    input_odom_topic: /Odometry
+    output_frame: ""
+    path_buffer_size: 200
+    min_dt: 0.01
+    min_speed_for_curvature: 0.5
+    speed_smoothing_gain: 0.2
+    yaw_rate_smoothing_gain: 0.2
+    publish_debug_markers: true
+
+shadow_virtual_control:
+  ros__parameters:
+    input_mode: scan
+    input_scan_topic: /livox/lane_detection/scan
+    input_pointcloud_topic: /livox/lidar
+    output_frame: ""
+    wheelbase: 2.7
+    lookahead_distance: 6.0
+    max_steering_rad: 0.6
+    forward_min_distance: 2.0
+    forward_max_distance: 20.0
+    bin_size: 1.0
+    max_lateral_distance: 8.0
+    assumed_lane_half_width: 1.75
+    min_points_per_side: 1
+    publish_debug_markers: true
+    warning_missing_boundary_weight: 0.7
+    warning_curvature_weight: 0.3
+    pointcloud_z_min: -1.5
+    pointcloud_z_max: 1.5
+    pointcloud_stride: 1
+
+shadow_mode_metrics:
+  ros__parameters:
+    ego_speed_topic: /shadow/ego/speed
+    ego_curvature_topic: /shadow/ego/curvature
+    virtual_steering_topic: /shadow/virtual/steering_proxy
+    virtual_curvature_topic: /shadow/virtual/curvature
+    virtual_warning_topic: /shadow/virtual/warning_score
+    wheelbase: 2.7
+    publish_rate_hz: 10.0
+    max_signal_age_sec: 0.5
+    steering_delta_warn_rad: 0.2
+    curvature_delta_warn_inv_m: 0.1
+    steering_delta_weight: 0.5
+    curvature_delta_weight: 0.3
+    virtual_warning_weight: 0.2
+    publish_invalid_summaries: false
+    enable_csv_logging: false
+    csv_path: Data/metrics/shadow_mode_metrics.csv

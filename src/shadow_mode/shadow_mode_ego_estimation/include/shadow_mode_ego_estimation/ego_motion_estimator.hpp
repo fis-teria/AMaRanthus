@@ -13,14 +13,17 @@
 namespace shadow_mode_ego_estimation
 {
 
+/// odometry から推定した ego state を保持する構造体。
 struct EgoMotionState
 {
-  double speed_mps {0.0};
-  double yaw_rate_rps {0.0};
-  double curvature_inv_m {0.0};
-  bool has_estimate {false};
+  double speed_mps {0.0};            ///< 推定速度 [m/s]
+  double yaw_rate_rps {0.0};         ///< 推定ヨーレート [rad/s]
+  double curvature_inv_m {0.0};      ///< 推定曲率の逆数 [1/m]
+  bool has_estimate {false};          ///< 推定値が利用可能かどうか
 };
 
+/// 過去の odometry をバッファリングし、
+/// シャドウモード用の経路と運動状態を推定するクラス。
 class EgoMotionEstimator
 {
 public:
@@ -31,7 +34,10 @@ public:
     double speed_smoothing_gain,
     double yaw_rate_smoothing_gain);
 
+  /// 新しい odometry を受け取り、最新の運動状態を計算する。
   EgoMotionState update(const nav_msgs::msg::Odometry & odom_msg);
+
+  /// 保存済みのサンプルから nav_msgs::msg::Path を構築する。
   nav_msgs::msg::Path buildPath(const std::string & frame_id) const;
 
 private:

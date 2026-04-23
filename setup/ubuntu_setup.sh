@@ -14,6 +14,7 @@ INSTALL_CUDA="${INSTALL_CUDA:-0}"
 INSTALL_NVIDIA_CONTAINER_TOOLKIT="${INSTALL_NVIDIA_CONTAINER_TOOLKIT:-0}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
 INSTALL_NVIDIA_SMI="${INSTALL_NVIDIA_SMI:-0}"
+INSTALL_NVIDIA_DRIVER="${INSTALL_NVIDIA_DRIVER:-0}"
 INSTALL_IBUS_MOZC="${INSTALL_IBUS_MOZC:-1}"
 INSTALL_UV="${INSTALL_UV:-1}"
 SKIP_LIBREALSENSE="${SKIP_LIBREALSENSE:-0}"
@@ -29,6 +30,7 @@ Reproduces the Docker development environment on an Ubuntu host as closely as po
 Options:
   --with-cuda                       Install Ubuntu's CUDA toolkit package.
   --with-nvidia-smi                Install an available nvidia-utils package.
+  --with-nvidia-driver            Install NVIDIA driver kernel modules for current kernel.
   --with-nvidia-container-toolkit  Install NVIDIA Container Toolkit for Docker GPU passthrough.
   --install-docker                 Install Docker Engine using the official convenience script.
   --skip-ibus-mozc                 Skip ibus / mozc installation and shell setup.
@@ -43,7 +45,7 @@ Options:
 Environment variables:
   ROS_DISTRO, ROS_APT_CODENAME, LIBREALSENSE_VERSION, LIVOX_SDK2_VERSION,
   LIBTORCH_VERSION, LIBTORCH_VARIANT, INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
-  INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_IBUS_MOZC, INSTALL_UV,
+  INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
   SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH
 
 Examples:
@@ -60,6 +62,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-nvidia-smi)
       INSTALL_NVIDIA_SMI=1
+      ;;
+    --with-nvidia-driver)
+      INSTALL_NVIDIA_DRIVER=1
       ;;
     --with-nvidia-container-toolkit)
       INSTALL_NVIDIA_CONTAINER_TOOLKIT=1
@@ -314,6 +319,31 @@ install_nvidia_smi() {
   warn "No supported nvidia-utils package was found in apt repositories"
 }
 
+install_nvidia_driver() {
+  if [[ "${INSTALL_NVIDIA_DRIVER}" != "1" ]]; then
+    return
+  fi
+
+  local kernel_version
+  kernel_version=$(uname -r)
+  local driver_versions=(590 580 570 550 545 535)
+
+  log "Installing NVIDIA driver kernel modules for kernel ${kernel_version}"
+  ${SUDO} apt-get update
+
+  for version in "${driver_versions[@]}"; do
+    local package="linux-modules-nvidia-${version}-${kernel_version}-generic"
+    if apt-cache show "${package}" >/dev/null 2>&1; then
+      apt_install "${package}"
+      log "Loading NVIDIA kernel module"
+      ${SUDO} modprobe nvidia
+      return
+    fi
+  done
+
+  warn "No supported NVIDIA kernel modules found for kernel ${kernel_version}"
+}
+
 install_docker_engine() {
   if [[ "${INSTALL_DOCKER}" != "1" ]]; then
     return
@@ -532,6 +562,7 @@ main() {
   install_ros_packages
   install_cuda_packages
   install_nvidia_smi
+  install_nvidia_driver
   install_docker_engine
   install_nvidia_container_toolkit
   install_ibus_mozc

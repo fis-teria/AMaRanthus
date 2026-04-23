@@ -15,12 +15,16 @@
 namespace shadow_mode_ego_estimation
 {
 
+/// 実車両またはシミュレーションの odometry を受け取り、
+/// シャドウモード用の ego motion を計算して公開するノード。
 class ShadowEgoEstimationNode : public rclcpp::Node
 {
 public:
   ShadowEgoEstimationNode();
 
 private:
+  /// 受信した odometry を元に状態を更新し、
+  /// パス・速度・ヨーレート・曲率などを公開するコールバック。
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
 
   std::string output_frame_;

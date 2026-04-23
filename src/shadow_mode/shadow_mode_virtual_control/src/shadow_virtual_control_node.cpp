@@ -13,7 +13,10 @@ namespace shadow_mode_virtual_control
 ShadowVirtualControlNode::ShadowVirtualControlNode()
 : Node("shadow_virtual_control")
 {
+  // パラメータを宣言し、仮想制御に必要な設定を読み込む。
+  this->declare_parameter<std::string>("input_mode", "scan");
   this->declare_parameter<std::string>("input_scan_topic", "/livox/lane_detection/scan");
+  this->declare_parameter<std::string>("input_pointcloud_topic", "/livox/lidar");
   this->declare_parameter<std::string>("output_frame", "");
   this->declare_parameter<double>("wheelbase", 2.7);
   this->declare_parameter<double>("lookahead_distance", 6.0);
@@ -27,8 +30,13 @@ ShadowVirtualControlNode::ShadowVirtualControlNode()
   this->declare_parameter<bool>("publish_debug_markers", true);
   this->declare_parameter<double>("warning_missing_boundary_weight", 0.7);
   this->declare_parameter<double>("warning_curvature_weight", 0.3);
+  this->declare_parameter<double>("pointcloud_z_min", -1.5);
+  this->declare_parameter<double>("pointcloud_z_max", 1.5);
+  this->declare_parameter<int>("pointcloud_stride", 1);
 
+  const auto input_mode = this->get_parameter("input_mode").as_string();
   const auto input_scan_topic = this->get_parameter("input_scan_topic").as_string();
+  const auto input_pointcloud_topic = this->get_parameter("input_pointcloud_topic").as_string();
   output_frame_ = this->get_parameter("output_frame").as_string();
   const auto wheelbase = this->get_parameter("wheelbase").as_double();
   const auto lookahead_distance = this->get_parameter("lookahead_distance").as_double();
@@ -43,6 +51,10 @@ ShadowVirtualControlNode::ShadowVirtualControlNode()
   warning_missing_boundary_weight_ =
     this->get_parameter("warning_missing_boundary_weight").as_double();
   warning_curvature_weight_ = this->get_parameter("warning_curvature_weight").as_double();
+  pointcloud_z_min_ = this->get_parameter("pointcloud_z_min").as_double();
+  pointcloud_z_max_ = this->get_parameter("pointcloud_z_max").as_double();
+  const auto pointcloud_stride_param = this->get_parameter("pointcloud_stride").as_int();
+  pointcloud_stride_ = static_cast<std::size_t>(std::max<int64_t>(pointcloud_stride_param, 1));
 
   path_builder_ = std::make_unique<ScanPathBuilder>(
     forward_min_distance,
@@ -57,10 +69,25 @@ ShadowVirtualControlNode::ShadowVirtualControlNode()
     lookahead_distance,
     max_steering_rad);
 
-  scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-    input_scan_topic,
-    rclcpp::SensorDataQoS(),
-    std::bind(&ShadowVirtualControlNode::scanCallback, this, std::placeholders::_1));
+  if (input_mode == "pointcloud") {
+    // 3D PointCloud2 を受信し、地面投影で中心線経路と仮想制御出力を生成する。
+    pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      input_pointcloud_topic,
+      rclcpp::SensorDataQoS(),
+      std::bind(&ShadowVirtualControlNode::pointCloudCallback, this, std::placeholders::_1));
+  } else {
+    if (input_mode != "scan") {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Unsupported input_mode '%s'. Falling back to LaserScan mode.",
+        input_mode.c_str());
+    }
+    // LaserScan を受信し、中心線経路と仮想制御出力を生成する。
+    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+      input_scan_topic,
+      rclcpp::SensorDataQoS(),
+      std::bind(&ShadowVirtualControlNode::scanCallback, this, std::placeholders::_1));
+  }
 
   virtual_path_pub_ = this->create_publisher<nav_msgs::msg::Path>("/shadow/virtual/path", 10);
   virtual_steering_pub_ =
@@ -78,7 +105,27 @@ ShadowVirtualControlNode::ShadowVirtualControlNode()
 
 void ShadowVirtualControlNode::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
+  // スキャンデータから中心線経路を構築し、純追従制御を適用する。
   const auto centerline = path_builder_->build(*msg, output_frame_);
+  publishControlFromCenterline(centerline, msg->header.stamp);
+}
+
+void ShadowVirtualControlNode::pointCloudCallback(
+  const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  const auto centerline = path_builder_->build(
+    *msg,
+    output_frame_,
+    pointcloud_z_min_,
+    pointcloud_z_max_,
+    pointcloud_stride_);
+  publishControlFromCenterline(centerline, msg->header.stamp);
+}
+
+void ShadowVirtualControlNode::publishControlFromCenterline(
+  const CenterlineResult & centerline,
+  const rclcpp::Time & stamp)
+{
   virtual_path_pub_->publish(centerline.path);
 
   const auto control = controller_->compute(centerline.path);
@@ -92,6 +139,7 @@ void ShadowVirtualControlNode::scanCallback(const sensor_msgs::msg::LaserScan::S
   virtual_curvature_pub_->publish(curvature_msg);
 
   const double curvature_component = std::min(centerline.path_curvature_proxy, 1.0);
+  // 境界線欠損率と曲率代理値を重み付きで合成し、警告スコアを算出する。
   const double warning_score = std::clamp(
     warning_missing_boundary_weight_ * centerline.missing_boundary_ratio +
     warning_curvature_weight_ * curvature_component,
@@ -107,7 +155,7 @@ void ShadowVirtualControlNode::scanCallback(const sensor_msgs::msg::LaserScan::S
       buildDebugMarkers(
         centerline.path,
         centerline.path.header.frame_id,
-        msg->header.stamp));
+        stamp));
   }
 }
 
@@ -116,6 +164,7 @@ visualization_msgs::msg::MarkerArray ShadowVirtualControlNode::buildDebugMarkers
   const std::string & frame_id,
   const rclcpp::Time & stamp) const
 {
+  // 計算済み中心線を RViz 用の LINE_STRIP マーカーに変換する。
   visualization_msgs::msg::MarkerArray marker_array;
 
   visualization_msgs::msg::Marker path_marker;

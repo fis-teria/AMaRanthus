@@ -14,6 +14,7 @@ namespace shadow_mode_ego_estimation
 ShadowEgoEstimationNode::ShadowEgoEstimationNode()
 : Node("shadow_ego_estimation")
 {
+  // ノードパラメータを宣言し、動的に設定を読み込む。
   this->declare_parameter<std::string>("input_odom_topic", "/Odometry");
   this->declare_parameter<std::string>("output_frame", "");
   this->declare_parameter<int>("path_buffer_size", 200);
@@ -35,6 +36,7 @@ ShadowEgoEstimationNode::ShadowEgoEstimationNode()
     this->get_parameter("yaw_rate_smoothing_gain").as_double();
   publish_debug_markers_ = this->get_parameter("publish_debug_markers").as_bool();
 
+  // EgoMotionEstimator を初期化し、過去 odometry のバッファと平滑化設定を構成する。
   estimator_ = std::make_unique<EgoMotionEstimator>(
     static_cast<std::size_t>(path_buffer_size),
     min_dt,
@@ -62,12 +64,14 @@ ShadowEgoEstimationNode::ShadowEgoEstimationNode()
 
 void ShadowEgoEstimationNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
+  // インポートした odometry から ego motion を推定し、各種トピックを公開する。
   const auto state = estimator_->update(*msg);
   const auto frame_id = output_frame_.empty() ? msg->header.frame_id : output_frame_;
 
   auto path = estimator_->buildPath(frame_id);
   ego_path_pub_->publish(path);
 
+  // 推定結果をそれぞれのシャドウ出力トピックに変換して公開する。
   std_msgs::msg::Float32 speed_msg;
   speed_msg.data = static_cast<float>(state.speed_mps);
   ego_speed_pub_->publish(speed_msg);
@@ -81,6 +85,7 @@ void ShadowEgoEstimationNode::odomCallback(const nav_msgs::msg::Odometry::Shared
   ego_curvature_pub_->publish(curvature_msg);
 
   if (publish_debug_markers_ && ego_debug_markers_pub_ != nullptr) {
+    // 生成した中心線を RViz で可視化するために MarkerArray を作成する。
     visualization_msgs::msg::MarkerArray marker_array;
     visualization_msgs::msg::Marker marker;
     marker.header = path.header;

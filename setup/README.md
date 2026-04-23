@@ -36,7 +36,13 @@ git clone --recurse-submodules git@github.com:fis-teria/AMaRanthus.git
 CUDA も含めてホスト実行用に揃える:
 
 ```bash
-./setup/ubuntu_setup.sh --with-cuda --with-nvidia-smi --libtorch-variant cu121
+./setup/ubuntu_setup.sh --with-cuda --with-nvidia-smi --with-nvidia-driver --libtorch-variant cu121
+```
+
+NVIDIA driver カーネルモジュールのみをインストール (GPU を使うが nvidia-utils は不要な場合):
+
+```bash
+./setup/ubuntu_setup.sh --with-nvidia-driver
 ```
 
 Docker の GPU パススルーも使えるようにする:
@@ -51,6 +57,7 @@ Docker の GPU パススルーも使えるようにする:
 ./setup/ubuntu_setup.sh \
   --with-cuda \
   --with-nvidia-smi \
+  --with-nvidia-driver \
   --install-docker \
   --with-nvidia-container-toolkit \
   --libtorch-variant cu121
@@ -107,6 +114,7 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
 - ROS 2 Humble の apt バイナリ前提なので、Ubuntu 22.04 以外では一部ステップが失敗する可能性があります。
 - `--with-cuda` は Ubuntu リポジトリの `nvidia-cuda-toolkit` を使います。ネイティブ CUDA 開発で厳密なバージョン固定が必要なら、必要に応じて NVIDIA 提供の CUDA パッケージへ置き換えてください。
+- `--with-nvidia-driver` はカーネルアップデート後に NVIDIA driver が動作しなくなった場合に便利です。現在のカーネルバージョン用のカーネルモジュールパッケージを自動検出・インストールします。
 - `--with-nvidia-container-toolkit` は Docker が必要です。未導入なら `--install-docker` を併用してください。
 - `libtorch` の GPU バリアントは `cu118` と `cu121` を選べます。ホスト側 CUDA / ドライバとの整合は利用環境に合わせてください。
 - `uv` は Astral の公式 standalone installer で導入し、PATH 変更は `ubuntu_env.sh` 側で管理します。
