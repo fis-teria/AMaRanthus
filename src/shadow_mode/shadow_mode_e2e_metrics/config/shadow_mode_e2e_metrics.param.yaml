@@ -1,0 +1,15 @@
+shadow_mode_e2e_metrics:
+  ros__parameters:
+    ego_speed_topic: /shadow/ego/speed
+    ego_curvature_topic: /shadow/ego/curvature
+    virtual_steering_topic: /shadow/virtual/steering_proxy
+    virtual_curvature_topic: /shadow/virtual/curvature
+    e2e_steering_topic: /shadow/e2e/steering_proxy
+    e2e_curvature_topic: /shadow/e2e/curvature
+    e2e_confidence_topic: /shadow/e2e/confidence
+    publish_rate_hz: 10.0
+    input_timeout_sec: 0.5
+    wheel_base_m: 2.7
+    steering_delta_scale_rad: 0.35
+    curvature_delta_scale: 0.08
+    confidence_penalty_weight: 0.25

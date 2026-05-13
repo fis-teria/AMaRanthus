@@ -110,7 +110,7 @@
   - `/shadow/metrics/e2e_curvature_delta`
   - `/shadow/metrics/e2e_intervention_score`
   - `/shadow/metrics/e2e_summary`
-- `shadow_mode_bringup.launch.py` に `use_e2e_transfuser` と `use_e2e_metrics` を追加する。
+- 既存 `shadow_mode_bringup.launch.py` を直接汚さず、`e2e_transfuser` 側に `shadow_mode_e2e_transfuser.launch.py` を追加して `shadow_mode_bringup`、`e2e_transfuser`、`shadow_mode_e2e_metrics` をまとめて起動する。
 
 受け入れ基準:
 
