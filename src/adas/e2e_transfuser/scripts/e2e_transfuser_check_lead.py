@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 import argparse
+from pathlib import Path
 import sys
+
+_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+if (_SOURCE_ROOT / "e2e_transfuser").exists():
+    sys.path.insert(0, str(_SOURCE_ROOT))
 
 from e2e_transfuser.environment import dumps_summary, inspect_lead_environment
 

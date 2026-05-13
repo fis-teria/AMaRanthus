@@ -19,6 +19,7 @@ e2e_transfuser:
     wheel_base_m: 2.7
     default_target_x_m: 15.0
     default_target_y_m: 0.0
+    require_target_point: true
     enable_debug_markers: true
     enable_autoware_trajectory: false
     disable_aux_heads: true

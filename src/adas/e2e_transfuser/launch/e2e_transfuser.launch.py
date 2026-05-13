@@ -41,6 +41,7 @@ def generate_launch_description():
             DeclareLaunchArgument("max_waypoints", default_value="10"),
             DeclareLaunchArgument("waypoint_spacing_m", default_value="1.5"),
             DeclareLaunchArgument("wheel_base_m", default_value="2.7"),
+            DeclareLaunchArgument("require_target_point", default_value="true"),
             DeclareLaunchArgument("disable_aux_heads", default_value="true"),
             DeclareLaunchArgument("single_checkpoint", default_value="true"),
             DeclareLaunchArgument("allow_int8", default_value="false"),
@@ -78,6 +79,9 @@ def generate_launch_description():
                         ),
                         "wheel_base_m": ParameterValue(
                             LaunchConfiguration("wheel_base_m"), value_type=float
+                        ),
+                        "require_target_point": ParameterValue(
+                            LaunchConfiguration("require_target_point"), value_type=bool
                         ),
                         "disable_aux_heads": ParameterValue(
                             LaunchConfiguration("disable_aux_heads"), value_type=bool

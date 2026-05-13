@@ -13,6 +13,7 @@ install(DIRECTORY e2e_transfuser
 )
 
 install(PROGRAMS
+  scripts/e2e_transfuser_node.py
   scripts/e2e_transfuser_check_lead.py
   DESTINATION lib/${PROJECT_NAME}
 )
