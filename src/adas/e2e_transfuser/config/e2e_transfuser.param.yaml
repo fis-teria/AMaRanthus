@@ -1,0 +1,26 @@
+e2e_transfuser:
+  ros__parameters:
+    runtime_mode: mock
+    precision_mode: fp32
+    model_variant: tfv6_resnet34
+    model_path: Data/models/tfv6/tfv6_resnet34
+    lead_project_root: ""
+    image_topic: /sensing/camera/camera0/image_rect_color
+    camera_info_topic: /sensing/camera/camera0/camera_info
+    pointcloud_topic: /livox/lidar
+    odom_topic: /Odometry
+    target_point_topic: /shadow/route/target_point
+    route_command_topic: /shadow/route/command
+    output_frame: base_link
+    publish_rate_hz: 10.0
+    input_timeout_sec: 0.5
+    max_waypoints: 10
+    waypoint_spacing_m: 1.5
+    wheel_base_m: 2.7
+    default_target_x_m: 15.0
+    default_target_y_m: 0.0
+    enable_debug_markers: true
+    enable_autoware_trajectory: false
+    disable_aux_heads: true
+    single_checkpoint: true
+    allow_int8: false
