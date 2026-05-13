@@ -31,6 +31,19 @@ def build_parser():
         choices=("fp32", "fp16", "int8"),
         default="fp32",
     )
+    parser.add_argument("--allow-int8", action="store_true")
+    parser.add_argument(
+        "--enable-aux-heads",
+        dest="disable_aux_heads",
+        action="store_false",
+        default=True,
+    )
+    parser.add_argument(
+        "--ensemble",
+        dest="single_checkpoint",
+        action="store_false",
+        default=True,
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -52,6 +65,9 @@ def main():
         model_variant=args.model_variant,
         runtime_mode=args.runtime_mode,
         precision_mode=args.precision_mode,
+        allow_int8=args.allow_int8,
+        disable_aux_heads=args.disable_aux_heads,
+        single_checkpoint=args.single_checkpoint,
     )
     print(dumps_summary(summary))
 

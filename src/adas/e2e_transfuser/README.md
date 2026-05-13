@@ -22,3 +22,16 @@ ros2 run e2e_transfuser e2e_transfuser_check_lead.py \
 ```
 
 `LEAD_PROJECT_ROOT` 環境変数も利用できます。
+
+## Phase 4: 軽量化ベンチマーク導線
+
+Z13 向けには、camera + LiDAR を維持したまま `PyTorch FP32 -> PyTorch FP16 -> TensorRT FP16 -> TensorRT INT8` の順に確認します。
+
+```bash
+ros2 run e2e_transfuser e2e_transfuser_benchmark.py \
+  --runtime-mode mock \
+  --precision-mode fp16 \
+  --dry-run
+```
+
+INT8 は calibration data と経路差分評価が必要なため、`--allow-int8` を明示した場合だけ検討対象にします。

@@ -24,6 +24,9 @@ def inspect_lead_environment(
     model_variant="tfv6_resnet34",
     runtime_mode="lead_python",
     precision_mode="fp32",
+    allow_int8=False,
+    disable_aux_heads=True,
+    single_checkpoint=True,
 ):
     lead_root = resolve_path(lead_project_root, "LEAD_PROJECT_ROOT")
     model_dir = resolve_path(model_path)
@@ -66,15 +69,20 @@ def inspect_lead_environment(
         if not dependencies["onnxruntime"]:
             blocking.append("python module 'onnxruntime' is not importable")
     elif runtime_mode == "tensorrt":
-        if precision_mode == "int8":
+        if precision_mode == "int8" and not allow_int8:
             blocking.append("INT8 requires explicit calibration data and allow_int8=true at runtime")
         if not dependencies["tensorrt"]:
             blocking.append("python module 'tensorrt' is not importable")
+    if precision_mode == "int8" and runtime_mode != "tensorrt":
+        blocking.append("INT8 is only supported for TensorRT runtime in this adapter")
 
     return {
         "model_variant": model_variant,
         "runtime_mode": runtime_mode,
         "precision_mode": precision_mode,
+        "allow_int8": bool(allow_int8),
+        "disable_aux_heads": bool(disable_aux_heads),
+        "single_checkpoint": bool(single_checkpoint),
         "lead_project_root": str(lead_root) if lead_root is not None else "",
         "model_path": str(model_dir) if model_dir is not None else "",
         "checks": checks,

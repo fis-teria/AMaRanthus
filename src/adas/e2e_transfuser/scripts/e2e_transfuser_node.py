@@ -101,6 +101,9 @@ class E2ETransfuserNode(Node):
             model_variant=self.model_variant,
             runtime_mode=self.runtime_mode,
             precision_mode=self.precision_mode,
+            allow_int8=self.allow_int8,
+            disable_aux_heads=self.disable_aux_heads,
+            single_checkpoint=self.single_checkpoint,
         )
 
         self.subscriptions_ = [
