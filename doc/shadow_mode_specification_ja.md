@@ -374,5 +374,6 @@ MVP として以下を満たせば、shadow-mode 基盤として成立とする�
 - `shadow_mode_dashboard`: GUI または RViz panel で steering delta、warning score、path 差分を可視化する
 - `shadow_mode_replay_tools`: bag replay、シナリオ名、結果ディレクトリを揃える実験スクリプト
 - `shadow_mode_autoware_adapter`: Autoware/Navigation2 の trajectory / control reference と比較する adapter
+- `e2e_transfuser`: `amaranthus/src/adas/e2e_transfuser` に配置し、LEAD / TransFuser V6 系モデルを shadow-mode の `/shadow/e2e/*` 出力として接続する。仕様は `doc/lead_transfuser_ros2_specification_ja.md` に分離する
 
 次の推奨フェーズは、`shadow_mode_driver_input` を追加し、CAN/OBD または手動アノテーションから実 driver steering / accel / brake proxy を受け取れるようにすることである。その後、`shadow_mode_metrics` の比較対象を Ego 曲率由来 proxy から実 driver input へ切り替える。
