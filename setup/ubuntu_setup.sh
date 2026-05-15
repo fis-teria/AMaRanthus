@@ -20,10 +20,15 @@ INSTALL_NVIDIA_SMI="${INSTALL_NVIDIA_SMI:-0}"
 INSTALL_NVIDIA_DRIVER="${INSTALL_NVIDIA_DRIVER:-0}"
 INSTALL_IBUS_MOZC="${INSTALL_IBUS_MOZC:-1}"
 INSTALL_UV="${INSTALL_UV:-1}"
+INSTALL_YOLO_CUDA_VENV="${INSTALL_YOLO_CUDA_VENV:-0}"
 SKIP_LIBREALSENSE="${SKIP_LIBREALSENSE:-0}"
 SKIP_LIVOX_SDK2="${SKIP_LIVOX_SDK2:-0}"
 SKIP_LIBTORCH="${SKIP_LIBTORCH:-0}"
 SKIP_ACADOS="${SKIP_ACADOS:-0}"
+YOLO_CUDA_TORCH_VERSION="${YOLO_CUDA_TORCH_VERSION:-2.11.0+cu128}"
+YOLO_CUDA_TORCHVISION_VERSION="${YOLO_CUDA_TORCHVISION_VERSION:-0.26.0+cu128}"
+YOLO_CUDA_TORCH_INDEX_URL="${YOLO_CUDA_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
+YOLO_ULTRALYTICS_VERSION="${YOLO_ULTRALYTICS_VERSION:-8.4.6}"
 
 usage() {
   cat <<'EOF'
@@ -39,6 +44,8 @@ Options:
   --install-docker                 Install Docker Engine using the official convenience script.
   --skip-ibus-mozc                 Skip ibus / mozc installation and shell setup.
   --skip-uv                        Skip uv installation.
+  --with-yolo-cuda-venv            Install CUDA-enabled Python deps for yolo_ros under Data/venvs.
+                                   Also installs the lightweight LEAD inference deps used by e2e_transfuser.
   --libtorch-variant <cpu|cu118|cu121>
                                    Select the libtorch package variant to install.
   --skip-libtorch                  Skip libtorch installation.
@@ -53,6 +60,7 @@ Environment variables:
   CUDA_VERSION,
   INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
   INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
+  INSTALL_YOLO_CUDA_VENV,
   SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH, SKIP_ACADOS
 
 Examples:
@@ -84,6 +92,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-uv)
       INSTALL_UV=0
+      ;;
+    --with-yolo-cuda-venv)
+      INSTALL_YOLO_CUDA_VENV=1
       ;;
     --libtorch-variant)
       shift
@@ -419,6 +430,7 @@ install_cuda_packages() {
 
 install_nvidia_smi() {
   local packages=(
+    nvidia-utils-595
     nvidia-utils-590
     nvidia-utils-580
     nvidia-utils-570
@@ -450,19 +462,24 @@ install_nvidia_driver() {
 
   local kernel_version
   kernel_version=$(uname -r)
-  local driver_versions=(590 580 570 550 545 535)
+  local kernel_flavor="${kernel_version##*-}"
+  local kernel_base="${kernel_version%-${kernel_flavor}}"
+  local driver_versions=(595 590 580 570 550 545 535)
+  local driver_variants=("-open" "" "-server-open" "-server")
 
   log "Installing NVIDIA driver kernel modules for kernel ${kernel_version}"
   ${SUDO} apt-get update
 
   for version in "${driver_versions[@]}"; do
-    local package="linux-modules-nvidia-${version}-${kernel_version}-generic"
-    if apt-cache show "${package}" >/dev/null 2>&1; then
-      apt_install "${package}"
-      log "Loading NVIDIA kernel module"
-      ${SUDO} modprobe nvidia
-      return
-    fi
+    for variant in "${driver_variants[@]}"; do
+      local package="linux-modules-nvidia-${version}${variant}-${kernel_base}-${kernel_flavor}"
+      if apt-cache show "${package}" >/dev/null 2>&1; then
+        apt_install "${package}" "nvidia-utils-${version}"
+        log "Loading NVIDIA kernel module"
+        ${SUDO} modprobe nvidia
+        return
+      fi
+    done
   done
 
   warn "No supported NVIDIA kernel modules found for kernel ${kernel_version}"
@@ -537,6 +554,58 @@ install_uv() {
 
   log "Installing uv with the official standalone installer"
   run_as_target_user env UV_NO_MODIFY_PATH=1 sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+}
+
+install_yolo_cuda_venv() {
+  local venv_dir="${REPO_ROOT}/Data/venvs/yolo_ros_cuda"
+
+  if [[ "${INSTALL_YOLO_CUDA_VENV}" != "1" ]]; then
+    return
+  fi
+
+  log "Installing CUDA-enabled YOLO Python environment into ${venv_dir}"
+  run_as_target_user mkdir -p "${REPO_ROOT}/Data"
+  run_as_target_user bash -lc "printf '%s\n' 'Generated runtime data is not part of the ROS workspace.' > '${REPO_ROOT}/Data/COLCON_IGNORE'"
+  run_as_target_user python3 -m venv --system-site-packages "${venv_dir}"
+  run_as_target_user "${venv_dir}/bin/python" -m pip install --upgrade pip "setuptools<82" wheel
+  run_as_target_user "${venv_dir}/bin/python" -m pip install \
+    --index-url "${YOLO_CUDA_TORCH_INDEX_URL}" \
+    "torch==${YOLO_CUDA_TORCH_VERSION}" \
+    "torchvision==${YOLO_CUDA_TORCHVISION_VERSION}"
+  run_as_target_user "${venv_dir}/bin/python" -m pip install \
+    "ultralytics==${YOLO_ULTRALYTICS_VERSION}" \
+    "ultralytics-thop==2.0.19" \
+    "lap>=0.5.12" \
+    "opencv-python==4.11.0.86" \
+    "polars==1.40.1" \
+    "scipy==1.15.3" \
+    "matplotlib==3.10.9" \
+    "numpy==1.26.4" \
+    "pillow==12.2.0" \
+    "PyYAML==6.0.3" \
+    "requests==2.28.1" \
+    "psutil==7.2.2" \
+    "beartype==0.21" \
+    "jaxtyping==0.3.2" \
+    "timm==1.0.19" \
+    "omegaconf==2.3" \
+    "easydict==1.13" \
+    "dictor==0.1.12" \
+    "diskcache==5.4" \
+    "einops>=0.8.0" \
+    "torchmetrics==0.11" \
+    "numba==0.61.2"
+  run_as_target_user "${venv_dir}/bin/python" - <<'PY'
+import torch
+import timm
+import ultralytics
+
+print(f"torch={torch.__version__} cuda_available={torch.cuda.is_available()} cuda={torch.version.cuda}")
+print(f"timm={timm.__version__}")
+print(f"ultralytics={ultralytics.__version__}")
+if not torch.cuda.is_available():
+    raise SystemExit("CUDA is not available from the YOLO Python environment")
+PY
 }
 
 install_libtorch() {
@@ -739,6 +808,7 @@ main() {
   install_nvidia_container_toolkit
   install_ibus_mozc
   install_uv
+  install_yolo_cuda_venv
   install_libtorch
   install_livrealsense
   install_livox_sdk2

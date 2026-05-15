@@ -39,10 +39,11 @@ git clone --recurse-submodules git@github.com:fis-teria/AMaRanthus.git
 CUDA も含めてホスト実行用に揃える:
 
 ```bash
-./setup/ubuntu_setup.sh --with-cuda --with-nvidia-smi --with-nvidia-driver --libtorch-variant cu121
+./setup/ubuntu_setup.sh --with-cuda --with-nvidia-smi --with-nvidia-driver --with-yolo-cuda-venv --libtorch-variant cu121
 ```
 
 `--with-cuda` は Autoware に合わせて NVIDIA apt repository から CUDA 12.8 系の開発パッケージを導入します。別バージョンを使う場合は `CUDA_VERSION=12.8` を上書きしてください。
+`--with-yolo-cuda-venv` は `e2e_transfuser` / `camera_lidar_bringup` から参照する Python 環境を `Data/venvs/yolo_ros_cuda` に作成し、CUDA 対応の `torch` / `torchvision`、`ultralytics`、LEAD / TFv6 の推論に必要な軽量依存を導入します。
 
 NVIDIA driver カーネルモジュールのみをインストール (GPU を使うが nvidia-utils は不要な場合):
 
@@ -63,6 +64,7 @@ Docker の GPU パススルーも使えるようにする:
   --with-cuda \
   --with-nvidia-smi \
   --with-nvidia-driver \
+  --with-yolo-cuda-venv \
   --install-docker \
   --with-nvidia-container-toolkit \
   --libtorch-variant cu121
@@ -119,7 +121,8 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
 - ROS 2 Humble の apt バイナリ前提なので、Ubuntu 22.04 以外では一部ステップが失敗する可能性があります。
 - `--with-cuda` は NVIDIA apt repository の CUDA パッケージを使います。Autoware の既定は CUDA 12.8 です。
-- `--with-nvidia-driver` はカーネルアップデート後に NVIDIA driver が動作しなくなった場合に便利です。現在のカーネルバージョン用のカーネルモジュールパッケージを自動検出・インストールします。
+- `--with-nvidia-driver` はカーネルアップデート後に NVIDIA driver が動作しなくなった場合に便利です。現在のカーネルバージョン用の `linux-modules-nvidia-<version>[-open]-<kernel>-<flavor>` パッケージを自動検出・インストールします。
+- `--with-yolo-cuda-venv` は数 GB の PyTorch CUDA wheel を `Data/venvs/yolo_ros_cuda` に導入します。この `Data/` は git 管理外で、`COLCON_IGNORE` により colcon の探索対象から外れます。
 - `--with-nvidia-container-toolkit` は Docker が必要です。未導入なら `--install-docker` を併用してください。
 - `libtorch` の GPU バリアントは `cu118` と `cu121` を選べます。ホスト側 CUDA / ドライバとの整合は利用環境に合わせてください。
 - `uv` は Astral の公式 standalone installer で導入し、PATH 変更は `ubuntu_env.sh` 側で管理します。

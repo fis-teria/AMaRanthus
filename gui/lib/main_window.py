@@ -1,8 +1,10 @@
 import sys
 from datetime import datetime
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import (
+    QApplication,
+    QCheckBox,
     QGridLayout,
     QHBoxLayout,
     QLineEdit,
@@ -23,6 +25,8 @@ from .pointcloud_view import PointCloudView
 from .sensor_view import SensorView
 from .shadow_panel import ShadowMetricsPanel
 from .status_panel import StatusPanel
+from .system_monitor import GpuMonitor, GpuStatus
+from .theme import apply_app_theme, normalize_theme
 from .ui_config import UiRenderConfig
 
 
@@ -38,6 +42,11 @@ TOPIC_FIELDS = [
     ("shadow", "Shadow"),
 ]
 
+LEFT_INITIAL_WIDTH = 850
+RIGHT_TELEMETRY_WIDTH = 650
+TOP_BAR_BUTTON_HEIGHT = 32
+TOP_BAR_MARGIN_Y = 2
+
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -45,16 +54,36 @@ class MainWindow(QMainWindow):
         data_sources: dict[str, object],
         render_config: UiRenderConfig,
         initial_data_source: str = "demo",
+        initial_theme: str = "dark",
+        gpu_monitor_interval_sec: float = 1.0,
+        gpu_monitor_enabled: bool = True,
     ):
         super().__init__()
         self._data_sources = data_sources
         self._render_config = render_config
+        self._gpu_monitor = GpuMonitor(
+            interval_sec=gpu_monitor_interval_sec,
+            enabled=gpu_monitor_enabled,
+            parent=self,
+        )
         self._auto_activate_ros2_fields = initial_data_source == "ros2"
         self._active_sources = {field_name: "demo" for field_name, _ in TOPIC_FIELDS}
         self._ros2_available_fields: set[str] = set()
         self._topic_buttons: dict[str, QPushButton] = {}
         self._last_states: dict[str, UiState] = {}
+        self._theme = normalize_theme(initial_theme)
+        self._normal_window_geometry = None
+        self._normal_window_flags = self.windowFlags()
+        self._borderless_full_screen = False
         self.setWindowTitle("Robot UI Sample")
+        window_flags = (
+            self._normal_window_flags
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        self.setWindowFlags(window_flags)
+        self._normal_window_flags = window_flags
         self.resize(1500, 850)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -65,16 +94,37 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(6)
 
         view_switch_bar = QHBoxLayout()
+        view_switch_bar.setContentsMargins(0, TOP_BAR_MARGIN_Y, 0, TOP_BAR_MARGIN_Y)
+        view_switch_bar.setSpacing(6)
         self.map_view_button = QPushButton("Map")
         self.pointcloud_view_button = QPushButton("PointCloud")
         self.camera_view_button = QPushButton("Camera")
-        for button in (self.map_view_button, self.pointcloud_view_button, self.camera_view_button):
+        self.full_screen_button = QPushButton("Full")
+        self.full_screen_button.setMinimumWidth(72)
+        self.full_screen_button.setToolTip("Toggle full screen")
+        self.dark_mode_checkbox = QCheckBox("Dark")
+        self.dark_mode_checkbox.setMinimumWidth(68)
+        self.dark_mode_checkbox.setChecked(self._theme == "dark")
+        self.dark_mode_checkbox.setToolTip("Dark theme")
+        for button in (
+            self.map_view_button,
+            self.pointcloud_view_button,
+            self.camera_view_button,
+            self.full_screen_button,
+        ):
+            button.setObjectName("TopBarButton")
             button.setCheckable(True)
-            button.setMinimumHeight(32)
+            button.setFixedHeight(TOP_BAR_BUTTON_HEIGHT)
+        self.full_screen_button.setCheckable(False)
+        self.dark_mode_checkbox.setObjectName("TopBarCheck")
+        self.dark_mode_checkbox.setFixedHeight(TOP_BAR_BUTTON_HEIGHT)
         self.camera_view_button.setChecked(True)
-        view_switch_bar.addWidget(self.map_view_button)
-        view_switch_bar.addWidget(self.pointcloud_view_button)
-        view_switch_bar.addWidget(self.camera_view_button)
+        view_switch_bar.addWidget(self.map_view_button, 0, Qt.AlignVCenter)
+        view_switch_bar.addWidget(self.pointcloud_view_button, 0, Qt.AlignVCenter)
+        view_switch_bar.addWidget(self.camera_view_button, 0, Qt.AlignVCenter)
+        view_switch_bar.addStretch(1)
+        view_switch_bar.addWidget(self.full_screen_button, 0, Qt.AlignVCenter)
+        view_switch_bar.addWidget(self.dark_mode_checkbox, 0, Qt.AlignVCenter)
 
         route_bar = QHBoxLayout()
         self.start_input = QLineEdit()
@@ -116,8 +166,12 @@ class MainWindow(QMainWindow):
         self.map_view_button.clicked.connect(lambda: self.switch_left_view("map"))
         self.pointcloud_view_button.clicked.connect(lambda: self.switch_left_view("pointcloud"))
         self.camera_view_button.clicked.connect(lambda: self.switch_left_view("camera"))
+        self.full_screen_button.clicked.connect(self.toggle_full_screen)
+        self.dark_mode_checkbox.stateChanged.connect(self._on_dark_mode_toggled)
 
         right_container = QWidget()
+        right_container.setObjectName("TelemetryPane")
+        right_container.setFixedWidth(RIGHT_TELEMETRY_WIDTH)
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(6, 6, 6, 6)
         right_layout.setSpacing(6)
@@ -156,11 +210,17 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left_container)
         splitter.addWidget(right_container)
-        splitter.setSizes([850, 650])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([LEFT_INITIAL_WIDTH, RIGHT_TELEMETRY_WIDTH])
         self.setCentralWidget(splitter)
+        self._apply_theme(self._theme)
 
         self.log_message("INFO", f"GUI started with initial source: {initial_data_source}")
         self._start_data_sources()
+        self._start_gpu_monitor()
 
     def on_search_route(self) -> None:
         start_query = self.start_input.text().strip()
@@ -200,6 +260,79 @@ class MainWindow(QMainWindow):
         self.pointcloud_view_button.blockSignals(False)
         self.camera_view_button.blockSignals(False)
 
+    def toggle_full_screen(self) -> None:
+        if self._borderless_full_screen or self.isFullScreen():
+            self._exit_full_screen()
+        else:
+            self._enter_full_screen()
+        self._update_full_screen_button()
+
+    def _enter_full_screen(self) -> None:
+        if not self._borderless_full_screen:
+            self._normal_window_geometry = self.geometry()
+            self._normal_window_flags = self.windowFlags()
+
+        self._borderless_full_screen = True
+        self.setWindowFlags(self._normal_window_flags | Qt.FramelessWindowHint)
+        display_geometry = self._current_available_geometry()
+        if display_geometry is not None:
+            self.setGeometry(display_geometry)
+        self.show()
+        if display_geometry is not None:
+            QTimer.singleShot(0, lambda geometry=display_geometry: self.setGeometry(geometry))
+
+    def _exit_full_screen(self) -> None:
+        normal_geometry = self._normal_window_geometry
+        self._borderless_full_screen = False
+        if self.isFullScreen():
+            self.showNormal()
+        self.setWindowFlags(self._normal_window_flags)
+        self.show()
+        if normal_geometry is not None:
+            QTimer.singleShot(0, lambda geometry=normal_geometry: self.setGeometry(geometry))
+        self._normal_window_geometry = None
+
+    def _current_available_geometry(self):
+        screen = None
+        window = self.windowHandle()
+        if window is not None:
+            screen = window.screen()
+        if screen is None:
+            screen = QApplication.screenAt(self.frameGeometry().center())
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return None
+        return screen.availableGeometry()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and (self._borderless_full_screen or self.isFullScreen()):
+            self._exit_full_screen()
+            self._update_full_screen_button()
+            event.accept()
+            return
+        if event.key() == Qt.Key_F11:
+            self.toggle_full_screen()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        self._update_full_screen_button()
+
+    def _update_full_screen_button(self) -> None:
+        if not hasattr(self, "full_screen_button"):
+            return
+        if self._borderless_full_screen or self.isFullScreen():
+            self.full_screen_button.setText("Exit")
+            self.full_screen_button.setMinimumWidth(72)
+            self.full_screen_button.setToolTip("Exit borderless window")
+        else:
+            self.full_screen_button.setText("Full")
+            self.full_screen_button.setMinimumWidth(72)
+            self.full_screen_button.setToolTip("Enter borderless window")
+
     def switch_topic_source(self, field_name: str, use_ros2: bool) -> None:
         if use_ros2 and field_name not in self._ros2_available_fields:
             self._active_sources[field_name] = "demo"
@@ -209,6 +342,18 @@ class MainWindow(QMainWindow):
         self._active_sources[field_name] = "ros2" if use_ros2 else "demo"
         self._update_topic_button(field_name)
         self._apply_composed_state()
+
+    def _on_dark_mode_toggled(self, state: int) -> None:
+        self._apply_theme("dark" if state == Qt.Checked else "light")
+        self.log_message("INFO", f"Theme switched to: {self._theme}")
+
+    def _apply_theme(self, theme_name: str) -> None:
+        self._theme = apply_app_theme(theme_name)
+        self.map_widget.set_dark_mode(self._theme == "dark")
+
+        self.dark_mode_checkbox.blockSignals(True)
+        self.dark_mode_checkbox.setChecked(self._theme == "dark")
+        self.dark_mode_checkbox.blockSignals(False)
 
     def _start_data_sources(self) -> None:
         demo_source = self._data_sources["demo"]
@@ -229,6 +374,14 @@ class MainWindow(QMainWindow):
             self.log_message("WARN", f"ROS2 data source disabled: {exc}")
             for button in self._topic_buttons.values():
                 button.setToolTip(str(exc))
+
+    def _start_gpu_monitor(self) -> None:
+        self._gpu_monitor.set_callback(self._on_gpu_status)
+        self._gpu_monitor.set_log_callback(self.log_message)
+        self._gpu_monitor.start()
+
+    def _on_gpu_status(self, status: GpuStatus) -> None:
+        self.status_panel.update_gpu_status(status)
 
     def _on_data_source_state(self, source_name: str, state: UiState) -> None:
         self._last_states[source_name] = state
@@ -309,6 +462,7 @@ class MainWindow(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event):
+        self._gpu_monitor.stop()
         for data_source in self._data_sources.values():
             data_source.stop()
         super().closeEvent(event)
@@ -317,6 +471,9 @@ class MainWindow(QMainWindow):
 def build_data_sources(
     *,
     ros_camera_image_topic: str,
+    ros_camera_overlay_topic: str,
+    ros_camera_overlay_timeout_sec: float,
+    ros_camera_display_max_edge_px: int,
     ros_camera_info_topic: str,
     ros_pointcloud_topic: str,
     ros_scan_topic: str,
@@ -341,6 +498,9 @@ def build_data_sources(
         "demo": DemoDataSource(),
         "ros2": Ros2DataSource(
             camera_image_topic=ros_camera_image_topic,
+            camera_overlay_topic=ros_camera_overlay_topic,
+            camera_overlay_timeout_sec=ros_camera_overlay_timeout_sec,
+            camera_display_max_edge_px=ros_camera_display_max_edge_px,
             camera_info_topic=ros_camera_info_topic,
             pointcloud_topic=ros_pointcloud_topic,
             scan_topic=ros_scan_topic,

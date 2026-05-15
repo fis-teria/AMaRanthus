@@ -1,10 +1,10 @@
 import json
 from typing import Optional
 
-from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QFrame, QGridLayout, QLabel
 
 from .models import ShadowMetrics
+from .rich_widgets import GaugeWidget, MetricBar
 
 
 class ShadowMetricsPanel(QFrame):
@@ -14,64 +14,84 @@ class ShadowMetricsPanel(QFrame):
 
         layout = QGridLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setHorizontalSpacing(14)
+        layout.setHorizontalSpacing(10)
         layout.setVerticalSpacing(8)
 
-        jp_font = QFont()
-        jp_font.setFamily("Noto Sans CJK JP, IPAGothic, TakaoGothic, Yu Gothic, MS Gothic, Arial")
-        jp_font.setPointSize(9)
-
         title = QLabel("Shadow Mode")
-        title.setFont(jp_font)
-        title.setStyleSheet("font-weight: bold; font-size: 15px;")
+        title.setObjectName("PanelTitle")
         layout.addWidget(title, 0, 0, 1, 2)
 
-        self.labels = {}
-        items = [
-            ("Ego速度", "--"),
-            ("Yaw rate", "--"),
-            ("Ego曲率", "--"),
-            ("ドライバ操舵", "--"),
-            ("仮想操舵", "--"),
-            ("仮想曲率", "--"),
-            ("操舵差分", "--"),
-            ("曲率差分", "--"),
-            ("警告スコア", "--"),
-            ("介入スコア", "--"),
-            ("Summary", "--"),
-        ]
+        self.ego_speed_gauge = GaugeWidget("EGO SPEED", "m/s", 0.0, 35.0)
+        self.yaw_rate_bar = MetricBar("Yaw rate", "rad/s", 0.0, 1.0)
+        self.ego_curvature_bar = MetricBar("Ego curvature", "1/m", 0.0, 0.12)
+        self.driver_steering_bar = MetricBar("Driver steering", "rad", 0.0, 0.7)
+        self.virtual_steering_bar = MetricBar("Virtual steering", "rad", 0.0, 0.7)
+        self.steering_delta_bar = MetricBar("Steering delta", "rad", 0.0, 0.7)
+        self.curvature_delta_bar = MetricBar("Curvature delta", "1/m", 0.0, 0.12)
+        self.warning_bar = MetricBar("Warning score", "", 0.0, 1.0)
+        self.intervention_bar = MetricBar("Intervention score", "", 0.0, 1.0)
+        self.summary_label = QLabel("--")
+        self.summary_label.setObjectName("SummaryLabel")
+        self.summary_label.setWordWrap(True)
 
-        for row, (title_text, value) in enumerate(items, start=1):
-            title_label = QLabel(title_text)
-            value_label = QLabel(value)
-            title_label.setFont(jp_font)
-            value_label.setFont(jp_font)
-            title_label.setStyleSheet("font-weight: bold;")
-            value_label.setStyleSheet("font-size: 14px;")
-            value_label.setWordWrap(True)
-            layout.addWidget(title_label, row, 0)
-            layout.addWidget(value_label, row, 1)
-            self.labels[title_text] = value_label
+        layout.addWidget(self.ego_speed_gauge, 1, 0, 3, 1)
+        layout.addWidget(self.yaw_rate_bar, 1, 1)
+        layout.addWidget(self.ego_curvature_bar, 2, 1)
+        layout.addWidget(self.driver_steering_bar, 3, 1)
+        layout.addWidget(self.virtual_steering_bar, 4, 0)
+        layout.addWidget(self.steering_delta_bar, 4, 1)
+        layout.addWidget(self.curvature_delta_bar, 5, 0)
+        layout.addWidget(self.warning_bar, 5, 1)
+        layout.addWidget(self.intervention_bar, 6, 0)
+        layout.addWidget(self.summary_label, 6, 1)
 
     def update_metrics(self, metrics: ShadowMetrics) -> None:
-        self.labels["Ego速度"].setText(self._format_speed(metrics.ego_speed_mps))
-        self.labels["Yaw rate"].setText(
-            self._format_unit(metrics.ego_yaw_rate_radps, "rad/s", 3)
+        ego_speed = metrics.ego_speed_mps
+        self.ego_speed_gauge.set_value(
+            ego_speed,
+            "--" if ego_speed is None else f"{ego_speed * 3.6:.1f} km/h",
         )
-        self.labels["Ego曲率"].setText(self._format_unit(metrics.ego_curvature_inv_m, "1/m", 4))
-        self.labels["ドライバ操舵"].setText(
-            self._format_unit(metrics.driver_steering_proxy_rad, "rad", 3)
+        self.yaw_rate_bar.set_metric(
+            self._abs_value(metrics.ego_yaw_rate_radps),
+            self._format_unit(metrics.ego_yaw_rate_radps, "rad/s", 3),
+            "left/right rotation magnitude",
         )
-        self.labels["仮想操舵"].setText(self._format_unit(metrics.virtual_steering_rad, "rad", 3))
-        self.labels["仮想曲率"].setText(self._format_unit(metrics.virtual_curvature_inv_m, "1/m", 4))
-        self.labels["操舵差分"].setText(self._format_unit(metrics.steering_delta_rad, "rad", 3))
-        self.labels["曲率差分"].setText(self._format_unit(metrics.curvature_delta_inv_m, "1/m", 4))
-        self.labels["警告スコア"].setText(self._format_score(metrics.virtual_warning_score))
-        self.labels["介入スコア"].setText(self._format_score(metrics.intervention_score))
-        self.labels["Summary"].setText(self._format_summary(metrics.summary))
-
-        self._apply_score_style("警告スコア", metrics.virtual_warning_score)
-        self._apply_score_style("介入スコア", metrics.intervention_score)
+        self.ego_curvature_bar.set_metric(
+            self._abs_value(metrics.ego_curvature_inv_m),
+            self._format_unit(metrics.ego_curvature_inv_m, "1/m", 4),
+            "path bend estimate",
+        )
+        self.driver_steering_bar.set_metric(
+            self._abs_value(metrics.driver_steering_proxy_rad),
+            self._format_unit(metrics.driver_steering_proxy_rad, "rad", 3),
+            "driver proxy",
+        )
+        self.virtual_steering_bar.set_metric(
+            self._abs_value(metrics.virtual_steering_rad),
+            self._format_unit(metrics.virtual_steering_rad, "rad", 3),
+            "planner proxy",
+        )
+        self.steering_delta_bar.set_metric(
+            self._abs_value(metrics.steering_delta_rad),
+            self._format_unit(metrics.steering_delta_rad, "rad", 3),
+            "driver vs virtual",
+        )
+        self.curvature_delta_bar.set_metric(
+            self._abs_value(metrics.curvature_delta_inv_m),
+            self._format_unit(metrics.curvature_delta_inv_m, "1/m", 4),
+            "trajectory disagreement",
+        )
+        self.warning_bar.set_metric(
+            metrics.virtual_warning_score,
+            self._format_score(metrics.virtual_warning_score),
+            self._score_caption(metrics.virtual_warning_score),
+        )
+        self.intervention_bar.set_metric(
+            metrics.intervention_score,
+            self._format_score(metrics.intervention_score),
+            self._score_caption(metrics.intervention_score),
+        )
+        self.summary_label.setText(self._format_summary(metrics.summary))
 
     def _format_speed(self, value_mps: Optional[float]) -> str:
         if value_mps is None:
@@ -87,6 +107,20 @@ class ShadowMetricsPanel(QFrame):
         if value is None:
             return "--"
         return f"{value:.2f}"
+
+    def _abs_value(self, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return None
+        return abs(value)
+
+    def _score_caption(self, value: Optional[float]) -> str:
+        if value is None:
+            return "waiting"
+        if value >= 0.7:
+            return "high attention"
+        if value >= 0.35:
+            return "watch"
+        return "nominal"
 
     def _format_summary(self, value: str) -> str:
         if not value or value == "--":
@@ -117,18 +151,3 @@ class ShadowMetricsPanel(QFrame):
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
-
-    def _apply_score_style(self, label_name: str, value: Optional[float]) -> None:
-        label = self.labels[label_name]
-        if value is None:
-            label.setStyleSheet("font-size: 14px;")
-            return
-
-        if value >= 0.7:
-            color = "#b42318"
-        elif value >= 0.35:
-            color = "#b54708"
-        else:
-            color = "#027a48"
-
-        label.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color};")

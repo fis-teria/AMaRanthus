@@ -23,16 +23,18 @@ def generate_launch_description():
     source_dir = os.path.realpath(__file__)
     for _ in range(4):
         source_dir = os.path.dirname(source_dir)
+    amaranthus_dir = os.path.dirname(source_dir)
     yolo_venv_site = os.path.join(
-        source_dir,
-        "img_proc",
-        "yolo_ros",
-        ".venv",
+        amaranthus_dir,
+        "Data",
+        "venvs",
+        "yolo_ros_cuda",
         "lib",
         "python3.10",
         "site-packages",
     )
     yolo_torch_lib = os.path.join(yolo_venv_site, "torch", "lib")
+    yolo_model_path = os.path.join(amaranthus_dir, "Data", "models", "yolo", "yolo11n.pt")
 
     use_v4l2_camera = LaunchConfiguration("use_v4l2_camera")
     use_livox_driver = LaunchConfiguration("use_livox_driver")
@@ -265,8 +267,8 @@ def generate_launch_description():
                 "camera_hardware_id",
                 default_value="tier4_automotive_hdr_camera_c2",
             ),
-            DeclareLaunchArgument("yolo_model", default_value="yolo11n.pt"),
-            DeclareLaunchArgument("yolo_device", default_value="cpu"),
+            DeclareLaunchArgument("yolo_model", default_value=yolo_model_path),
+            DeclareLaunchArgument("yolo_device", default_value="cuda:0"),
             DeclareLaunchArgument("yolo_enable", default_value="true"),
             DeclareLaunchArgument("yolo_threshold", default_value="0.5"),
             DeclareLaunchArgument("yolo_iou", default_value="0.7"),

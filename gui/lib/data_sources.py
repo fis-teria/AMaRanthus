@@ -1,9 +1,10 @@
 import json
 import math
 import random
+import time
 from typing import Callable, Optional
 
-from PyQt5.QtCore import QPoint, QObject, QPointF, QTimer
+from PyQt5.QtCore import QPoint, QObject, QPointF, Qt, QTimer
 from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPolygon
 
 from .models import CameraFrame, DetectedObject, PointCloudPoint, ShadowMetrics, UiState
@@ -205,6 +206,9 @@ class Ros2DataSource(QObject):
         self,
         *,
         camera_image_topic: str,
+        camera_overlay_topic: str,
+        camera_overlay_timeout_sec: float,
+        camera_display_max_edge_px: int,
         camera_info_topic: str,
         pointcloud_topic: str,
         scan_topic: str,
@@ -229,6 +233,9 @@ class Ros2DataSource(QObject):
         super().__init__(parent)
         self._callback: Optional[UiStateCallback] = None
         self._camera_image_topic = camera_image_topic
+        self._camera_overlay_topic = camera_overlay_topic
+        self._camera_overlay_timeout_sec = max(0.0, float(camera_overlay_timeout_sec))
+        self._camera_display_max_edge_px = max(0, int(camera_display_max_edge_px))
         self._camera_info_topic = camera_info_topic
         self._pointcloud_topic = pointcloud_topic
         self._scan_topic = scan_topic
@@ -260,6 +267,9 @@ class Ros2DataSource(QObject):
         self._pointcloud_parse_errors = 0
         self._camera_messages = 0
         self._camera_parse_errors = 0
+        self._camera_overlay_messages = 0
+        self._camera_overlay_parse_errors = 0
+        self._camera_overlay_received_at: Optional[float] = None
         self._camera_info_messages = 0
         self._camera_frame: Optional[CameraFrame] = None
         self._pointcloud_points: list[PointCloudPoint] = []
@@ -283,7 +293,12 @@ class Ros2DataSource(QObject):
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
-            from rclpy.qos import qos_profile_sensor_data
+            from rclpy.qos import (
+                DurabilityPolicy,
+                HistoryPolicy,
+                QoSProfile,
+                ReliabilityPolicy,
+            )
             from sensor_msgs.msg import CameraInfo, Image, LaserScan, PointCloud2
             from sensor_msgs_py import point_cloud2
             from std_msgs.msg import Float32, String
@@ -306,18 +321,35 @@ class Ros2DataSource(QObject):
         executor.add_node(node)
 
         self._point_cloud2 = point_cloud2
+        best_effort_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         node.create_subscription(
             Image,
             self._camera_image_topic,
             self._on_camera_image,
-            qos_profile_sensor_data,
+            best_effort_qos,
         )
-        node.create_subscription(CameraInfo, self._camera_info_topic, self._on_camera_info, 10)
+        node.create_subscription(
+            Image,
+            self._camera_overlay_topic,
+            self._on_camera_overlay_image,
+            best_effort_qos,
+        )
+        node.create_subscription(
+            CameraInfo,
+            self._camera_info_topic,
+            self._on_camera_info,
+            best_effort_qos,
+        )
         node.create_subscription(
             PointCloud2,
             self._pointcloud_topic,
             self._on_pointcloud,
-            qos_profile_sensor_data,
+            best_effort_qos,
         )
         node.create_subscription(LaserScan, self._scan_topic, self._on_scan, 10)
         node.create_subscription(LaserScan, self._lane_topic, self._on_lane, 10)
@@ -392,6 +424,14 @@ class Ros2DataSource(QObject):
         self._timer.timeout.connect(self._spin_once)
         self._timer.start(30)
         self._log("INFO", f"Subscribed camera image topic: {self._camera_image_topic}")
+        self._log(
+            "INFO",
+            (
+                "Subscribed camera overlay topic: "
+                f"{self._camera_overlay_topic} "
+                f"(preferred for {self._camera_overlay_timeout_sec:.1f}s)"
+            ),
+        )
         self._log("INFO", f"Subscribed camera info topic: {self._camera_info_topic}")
         self._log("INFO", f"Subscribed PointCloud2 topic: {self._pointcloud_topic}")
         self._log("INFO", f"Subscribed LaserScan topics: {self._scan_topic}, {self._lane_topic}")
@@ -549,38 +589,96 @@ class Ros2DataSource(QObject):
     def _on_camera_image(self, msg) -> None:
         self._mark_live_data("camera")
         self._camera_messages += 1
+        if self._camera_overlay_is_fresh():
+            return
+        self._store_camera_frame(
+            msg,
+            topic=self._camera_image_topic,
+            count=self._camera_messages,
+            source_label="Camera",
+            is_overlay=False,
+        )
+
+    def _on_camera_overlay_image(self, msg) -> None:
+        self._mark_live_data("camera")
+        self._camera_overlay_messages += 1
+        self._store_camera_frame(
+            msg,
+            topic=self._camera_overlay_topic,
+            count=self._camera_overlay_messages,
+            source_label="Camera overlay",
+            is_overlay=True,
+        )
+
+    def _camera_overlay_is_fresh(self) -> bool:
+        if self._camera_overlay_received_at is None:
+            return False
+        age_sec = time.monotonic() - self._camera_overlay_received_at
+        return age_sec <= self._camera_overlay_timeout_sec
+
+    def _store_camera_frame(
+        self,
+        msg,
+        *,
+        topic: str,
+        count: int,
+        source_label: str,
+        is_overlay: bool,
+    ) -> None:
         try:
             image = self._image_msg_to_qimage(msg)
         except Exception as exc:
-            self._camera_parse_errors += 1
+            if is_overlay:
+                self._camera_overlay_parse_errors += 1
+                parse_errors = self._camera_overlay_parse_errors
+            else:
+                self._camera_parse_errors += 1
+                parse_errors = self._camera_parse_errors
             self._log(
                 "ERROR",
-                f"Camera image parse failed ({self._camera_parse_errors}): {type(exc).__name__}: {exc}",
+                f"{source_label} image parse failed ({parse_errors}): {type(exc).__name__}: {exc}",
             )
             return
 
+        image = self._scale_camera_image(image)
         stamp = getattr(msg.header, "stamp", None)
         stamp_sec = 0.0
         if stamp is not None:
             stamp_sec = float(getattr(stamp, "sec", 0)) + float(getattr(stamp, "nanosec", 0)) * 1e-9
         self._camera_frame = CameraFrame(
             image=image,
-            width=int(msg.width),
-            height=int(msg.height),
+            width=int(image.width()),
+            height=int(image.height()),
             encoding=str(msg.encoding),
             frame_id=str(getattr(msg.header, "frame_id", "")),
             stamp_sec=stamp_sec,
-            topic=self._camera_image_topic,
+            topic=topic,
         )
-        if self._camera_messages == 1 or self._camera_messages % 100 == 0:
+        if is_overlay:
+            self._camera_overlay_received_at = time.monotonic()
+        if count == 1 or count % 100 == 0:
             self._log(
                 "INFO",
                 (
-                    f"Camera frame {self._camera_messages}: "
-                    f"{msg.width}x{msg.height} encoding={msg.encoding} step={msg.step}"
+                    f"{source_label} frame {count}: "
+                    f"{msg.width}x{msg.height}->{image.width()}x{image.height()} "
+                    f"encoding={msg.encoding} step={msg.step}"
                 ),
             )
         self._emit_state()
+
+    def _scale_camera_image(self, image: QImage) -> QImage:
+        if self._camera_display_max_edge_px <= 0:
+            return image
+        longest_edge = max(image.width(), image.height())
+        if longest_edge <= self._camera_display_max_edge_px:
+            return image
+        return image.scaled(
+            self._camera_display_max_edge_px,
+            self._camera_display_max_edge_px,
+            Qt.KeepAspectRatio,
+            Qt.FastTransformation,
+        )
 
     def _on_camera_info(self, msg) -> None:
         self._camera_info_messages += 1

@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtWebEngineWidgets import QWebEngineSettings
 
 from .main_window import MainWindow, build_data_sources
+from .theme import apply_app_theme
 from .ui_config import load_ui_render_config
 
 
@@ -18,7 +19,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="UIに流し込むデータソースを選択します。",
     )
     parser.add_argument("--ui-config", default=None)
+    parser.add_argument(
+        "--theme",
+        choices=["dark", "light"],
+        default="dark",
+        help="GUIの配色テーマを選択します。",
+    )
     parser.add_argument("--ros-camera-image-topic", default="/sensing/camera/camera0/image_rect_color")
+    parser.add_argument("--ros-camera-overlay-topic", default="/shadow/e2e/overlay_image")
+    parser.add_argument("--ros-camera-overlay-timeout-sec", type=float, default=1.0)
+    parser.add_argument("--ros-camera-display-max-edge-px", type=int, default=1280)
     parser.add_argument("--ros-camera-info-topic", default="/sensing/camera/camera0/camera_info")
     parser.add_argument("--ros-pointcloud-topic", default="/livox/lidar")
     parser.add_argument("--ros-scan-topic", default="/scan")
@@ -53,6 +63,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="/shadow/metrics/intervention_score",
     )
     parser.add_argument("--ros-shadow-summary-topic", default="/shadow/metrics/summary")
+    parser.add_argument("--gpu-monitor-interval-sec", type=float, default=1.0)
+    parser.add_argument("--disable-gpu-monitor", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -66,6 +78,7 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)
+    active_theme = apply_app_theme(args.theme)
 
     settings = QWebEngineSettings.globalSettings()
     settings.setAttribute(QWebEngineSettings.PluginsEnabled, True)
@@ -76,6 +89,9 @@ def main() -> None:
 
     data_sources = build_data_sources(
         ros_camera_image_topic=args.ros_camera_image_topic,
+        ros_camera_overlay_topic=args.ros_camera_overlay_topic,
+        ros_camera_overlay_timeout_sec=args.ros_camera_overlay_timeout_sec,
+        ros_camera_display_max_edge_px=args.ros_camera_display_max_edge_px,
         ros_camera_info_topic=args.ros_camera_info_topic,
         ros_pointcloud_topic=args.ros_pointcloud_topic,
         ros_scan_topic=args.ros_scan_topic,
@@ -102,6 +118,9 @@ def main() -> None:
             data_sources,
             render_config,
             initial_data_source=args.data_source,
+            initial_theme=active_theme,
+            gpu_monitor_interval_sec=args.gpu_monitor_interval_sec,
+            gpu_monitor_enabled=not args.disable_gpu_monitor,
         )
     except RuntimeError as exc:
         QMessageBox.critical(None, "起動エラー", str(exc))

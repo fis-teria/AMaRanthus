@@ -20,6 +20,43 @@ MAP_HTML = """
             height: 100%;
             margin: 0;
             padding: 0;
+            background: #f4f6f8;
+        }
+        body.dark-mode {
+            background: #101419;
+        }
+        body.dark-mode .leaflet-tile-pane {
+            filter: brightness(0.62) contrast(1.16) saturate(0.82) hue-rotate(180deg);
+        }
+        body.dark-mode .leaflet-control-container,
+        body.dark-mode .leaflet-popup-content-wrapper,
+        body.dark-mode .leaflet-popup-tip,
+        body.dark-mode .leaflet-routing-container {
+            filter: none;
+        }
+        body.dark-mode .leaflet-control,
+        body.dark-mode .leaflet-popup-content-wrapper,
+        body.dark-mode .leaflet-routing-container,
+        body.dark-mode .route-info {
+            background: #161d24;
+            border-color: #2c3845;
+            color: #e6edf3;
+        }
+        body.dark-mode .leaflet-control a {
+            background: #1d2730;
+            color: #e6edf3;
+        }
+        body.dark-mode .leaflet-control-attribution,
+        body.dark-mode .leaflet-control-attribution a {
+            background: rgba(22, 29, 36, 0.88);
+            color: #b6c5d2;
+        }
+        body.dark-mode .next-maneuver {
+            background: #122d36;
+            border-color: #255868;
+        }
+        body.dark-mode .steps-title {
+            color: #e6edf3;
         }
         .search-container {
             position: absolute;
@@ -482,6 +519,10 @@ MAP_HTML = """
 
         window.searchRouteFromNative = function(startQuery, endQuery) {
             executeRouteSearch((startQuery || '').trim(), (endQuery || '').trim());
+        };
+
+        window.setMapDarkMode = function(enabled) {
+            document.body.classList.toggle('dark-mode', Boolean(enabled));
         };
 
         function setupIMEHandling(inputElement) {

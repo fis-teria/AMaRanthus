@@ -1,8 +1,12 @@
 e2e_path_overlay:
   ros__parameters:
     image_topic: /sensing/camera/camera0/image_rect_color
+    image_fallback_topics:
+      - /sensing/camera/camera0/image_rect_color
+      - /image_rect_color
     camera_info_topic: /sensing/camera/camera0/camera_info
     path_topic: /shadow/e2e/path
+    yolo_detections_topic: /yolo/tracking
     output_image_topic: /shadow/e2e/overlay_image
     output_status_topic: /shadow/e2e/overlay_status
     use_tf_translation: true
@@ -11,9 +15,21 @@ e2e_path_overlay:
     camera_z_m: 1.35
     min_depth_m: 0.5
     max_depth_m: 80.0
+    path_style: comma
+    path_ribbon_width_m: 2.8
+    path_ribbon_color_rgb: [0, 210, 120]
+    path_edge_color_rgb: [180, 255, 210]
+    path_ribbon_alpha_near: 0.62
+    path_ribbon_alpha_far: 0.22
+    path_edge_width_px: 2
     line_width_px: 5
     line_color_rgb: [0, 255, 80]
     point_radius_px: 3
-    draw_waypoints: true
+    draw_waypoints: false
+    draw_yolo_boxes: true
+    yolo_min_score: 0.25
+    yolo_box_width_px: 3
+    yolo_box_color_rgb: [255, 220, 0]
     stale_path_timeout_sec: 1.0
+    stale_yolo_timeout_sec: 1.0
     stale_camera_info_timeout_sec: 2.0

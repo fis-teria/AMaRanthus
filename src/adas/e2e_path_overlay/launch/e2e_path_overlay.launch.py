@@ -28,6 +28,10 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("path_topic", default_value="/shadow/e2e/path"),
             DeclareLaunchArgument(
+                "yolo_detections_topic",
+                default_value="/yolo/tracking",
+            ),
+            DeclareLaunchArgument(
                 "output_image_topic",
                 default_value="/shadow/e2e/overlay_image",
             ),
@@ -46,6 +50,9 @@ def generate_launch_description():
                         "image_topic": LaunchConfiguration("image_topic"),
                         "camera_info_topic": LaunchConfiguration("camera_info_topic"),
                         "path_topic": LaunchConfiguration("path_topic"),
+                        "yolo_detections_topic": LaunchConfiguration(
+                            "yolo_detections_topic"
+                        ),
                         "output_image_topic": LaunchConfiguration("output_image_topic"),
                         "use_tf_translation": ParameterValue(
                             LaunchConfiguration("use_tf_translation"), value_type=bool

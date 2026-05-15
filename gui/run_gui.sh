@@ -42,8 +42,12 @@ HELIANTHUS_DIR="$(cd "${AMARANTHUS_DIR}/.." && pwd)"
 
 DATA_SOURCE="${DATA_SOURCE:-ros2}"
 UI_CONFIG="${UI_CONFIG:-${SCRIPT_DIR}/config/ui.yaml}"
+GUI_THEME="${GUI_THEME:-dark}"
 PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 ROS_CAMERA_IMAGE_TOPIC="${ROS_CAMERA_IMAGE_TOPIC:-/sensing/camera/camera0/image_rect_color}"
+ROS_CAMERA_OVERLAY_TOPIC="${ROS_CAMERA_OVERLAY_TOPIC:-/shadow/e2e/overlay_image}"
+ROS_CAMERA_OVERLAY_TIMEOUT_SEC="${ROS_CAMERA_OVERLAY_TIMEOUT_SEC:-1.0}"
+ROS_CAMERA_DISPLAY_MAX_EDGE_PX="${ROS_CAMERA_DISPLAY_MAX_EDGE_PX:-1280}"
 ROS_CAMERA_INFO_TOPIC="${ROS_CAMERA_INFO_TOPIC:-/sensing/camera/camera0/camera_info}"
 ROS_POINTCLOUD_TOPIC="${ROS_POINTCLOUD_TOPIC:-/livox/lidar}"
 ROS_SCAN_TOPIC="${ROS_SCAN_TOPIC:-/scan}"
@@ -63,6 +67,8 @@ ROS_SHADOW_STEERING_DELTA_TOPIC="${ROS_SHADOW_STEERING_DELTA_TOPIC:-/shadow/metr
 ROS_SHADOW_CURVATURE_DELTA_TOPIC="${ROS_SHADOW_CURVATURE_DELTA_TOPIC:-/shadow/metrics/curvature_delta}"
 ROS_SHADOW_INTERVENTION_SCORE_TOPIC="${ROS_SHADOW_INTERVENTION_SCORE_TOPIC:-/shadow/metrics/intervention_score}"
 ROS_SHADOW_SUMMARY_TOPIC="${ROS_SHADOW_SUMMARY_TOPIC:-/shadow/metrics/summary}"
+GPU_MONITOR_INTERVAL_SEC="${GPU_MONITOR_INTERVAL_SEC:-1.0}"
+DISABLE_GPU_MONITOR="${DISABLE_GPU_MONITOR:-0}"
 
 export PYTHONUNBUFFERED
 
@@ -79,10 +85,19 @@ cd "${SCRIPT_DIR}"
 
 echo "[INFO] Launching AMaRanthus GUI (${DATA_SOURCE})..."
 
+EXTRA_ARGS=()
+if [[ "${DISABLE_GPU_MONITOR}" == "1" ]]; then
+    EXTRA_ARGS+=(--disable-gpu-monitor)
+fi
+
 exec uv run main.py \
     --data-source "${DATA_SOURCE}" \
     --ui-config "${UI_CONFIG}" \
+    --theme "${GUI_THEME}" \
     --ros-camera-image-topic "${ROS_CAMERA_IMAGE_TOPIC}" \
+    --ros-camera-overlay-topic "${ROS_CAMERA_OVERLAY_TOPIC}" \
+    --ros-camera-overlay-timeout-sec "${ROS_CAMERA_OVERLAY_TIMEOUT_SEC}" \
+    --ros-camera-display-max-edge-px "${ROS_CAMERA_DISPLAY_MAX_EDGE_PX}" \
     --ros-camera-info-topic "${ROS_CAMERA_INFO_TOPIC}" \
     --ros-pointcloud-topic "${ROS_POINTCLOUD_TOPIC}" \
     --ros-scan-topic "${ROS_SCAN_TOPIC}" \
@@ -102,4 +117,6 @@ exec uv run main.py \
     --ros-shadow-curvature-delta-topic "${ROS_SHADOW_CURVATURE_DELTA_TOPIC}" \
     --ros-shadow-intervention-score-topic "${ROS_SHADOW_INTERVENTION_SCORE_TOPIC}" \
     --ros-shadow-summary-topic "${ROS_SHADOW_SUMMARY_TOPIC}" \
+    --gpu-monitor-interval-sec "${GPU_MONITOR_INTERVAL_SEC}" \
+    "${EXTRA_ARGS[@]}" \
     "$@"

@@ -5,15 +5,26 @@ e2e_transfuser:
     model_variant: tfv6_resnet34
     model_path: Data/models/tfv6/tfv6_resnet34
     lead_project_root: ""
+    lead_python_site: ""
+    lead_torch_lib: ""
+    runtime_device: cuda:0
+    lead_strict_weight_load: false
+    lead_probe_on_startup: true
+    lead_force_timm_pretrained_off: true
     image_topic: /sensing/camera/camera0/image_rect_color
+    image_fallback_topics:
+      - /sensing/camera/camera0/image_rect_color
+      - /image_rect_color
     camera_info_topic: /sensing/camera/camera0/camera_info
     pointcloud_topic: /livox/lidar
+    sensor_input_mode: auto
     odom_topic: /Odometry
     target_point_topic: /shadow/route/target_point
     route_command_topic: /shadow/route/command
     output_frame: base_link
     publish_rate_hz: 10.0
     input_timeout_sec: 0.5
+    camera_only_confidence_scale: 0.75
     max_waypoints: 10
     waypoint_spacing_m: 1.5
     wheel_base_m: 2.7

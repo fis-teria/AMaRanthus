@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import json
 import math
-from pathlib import Path
+from pathlib import Path as FilePath
 import sys
 
-_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+_SOURCE_ROOT = FilePath(__file__).resolve().parents[1]
 if (_SOURCE_ROOT / "e2e_transfuser").exists():
     # symlink-install 時も source 側 helper package を import できるようにする。
     sys.path.insert(0, str(_SOURCE_ROOT))
@@ -19,10 +19,25 @@ from std_msgs.msg import Float32, String
 from visualization_msgs.msg import Marker, MarkerArray
 
 from e2e_transfuser.environment import inspect_lead_environment
+from e2e_transfuser.lead_runtime import LeadTorchRuntime
 
 
 def stamp_to_float(stamp):
     return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+
+def unique_topics(primary, fallback_topics):
+    topics = [primary]
+    if isinstance(fallback_topics, str):
+        topics.append(fallback_topics)
+    else:
+        topics.extend(fallback_topics)
+    unique = []
+    for topic in topics:
+        topic = str(topic)
+        if topic and topic not in unique:
+            unique.append(topic)
+    return unique
 
 
 class LatestSample:
@@ -57,13 +72,30 @@ class E2ETransfuserNode(Node):
             "model_path", "Data/models/tfv6/tfv6_resnet34"
         ).value
         self.lead_project_root = self.declare_parameter("lead_project_root", "").value
+        self.lead_python_site = self.declare_parameter("lead_python_site", "").value
+        self.lead_torch_lib = self.declare_parameter("lead_torch_lib", "").value
+        self.runtime_device = self.declare_parameter("runtime_device", "cuda:0").value
+        self.lead_strict_weight_load = bool(
+            self.declare_parameter("lead_strict_weight_load", False).value
+        )
+        self.lead_probe_on_startup = bool(
+            self.declare_parameter("lead_probe_on_startup", True).value
+        )
+        self.lead_force_timm_pretrained_off = bool(
+            self.declare_parameter("lead_force_timm_pretrained_off", True).value
+        )
         self.image_topic = self.declare_parameter(
             "image_topic", "/sensing/camera/camera0/image_rect_color"
+        ).value
+        self.image_fallback_topics = self.declare_parameter(
+            "image_fallback_topics",
+            ["/sensing/camera/camera0/image_rect_color", "/image_rect_color"],
         ).value
         self.camera_info_topic = self.declare_parameter(
             "camera_info_topic", "/sensing/camera/camera0/camera_info"
         ).value
         self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/livox/lidar").value
+        self.sensor_input_mode = self.declare_parameter("sensor_input_mode", "auto").value
         self.odom_topic = self.declare_parameter("odom_topic", "/Odometry").value
         self.target_point_topic = self.declare_parameter(
             "target_point_topic", "/shadow/route/target_point"
@@ -74,6 +106,9 @@ class E2ETransfuserNode(Node):
         self.output_frame = self.declare_parameter("output_frame", "base_link").value
         self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 10.0).value)
         self.input_timeout_sec = float(self.declare_parameter("input_timeout_sec", 0.5).value)
+        self.camera_only_confidence_scale = self.clamp01(
+            float(self.declare_parameter("camera_only_confidence_scale", 0.75).value)
+        )
         self.max_waypoints = int(self.declare_parameter("max_waypoints", 10).value)
         self.waypoint_spacing_m = float(self.declare_parameter("waypoint_spacing_m", 1.5).value)
         self.wheel_base_m = float(self.declare_parameter("wheel_base_m", 2.7).value)
@@ -88,8 +123,14 @@ class E2ETransfuserNode(Node):
         self.disable_aux_heads = bool(self.declare_parameter("disable_aux_heads", True).value)
         self.single_checkpoint = bool(self.declare_parameter("single_checkpoint", True).value)
         self.allow_int8 = bool(self.declare_parameter("allow_int8", False).value)
+        valid_sensor_input_modes = {"auto", "camera_lidar", "camera_only"}
+        if self.sensor_input_mode not in valid_sensor_input_modes:
+            self.get_logger().warn(
+                f"Unknown sensor_input_mode={self.sensor_input_mode}; falling back to auto"
+            )
+            self.sensor_input_mode = "auto"
 
-        # camera + LiDAR + odometry + route proxy を揃えてから E2E 出力する。
+        # camera + optional LiDAR + odometry + route proxy を揃えてから E2E 出力する。
         self.samples = {
             "image": LatestSample(),
             "camera_info": LatestSample(),
@@ -110,11 +151,70 @@ class E2ETransfuserNode(Node):
             disable_aux_heads=self.disable_aux_heads,
             single_checkpoint=self.single_checkpoint,
         )
+        self.lead_runtime = None
+        self.lead_forward_error = ""
+        self.lead_forward_latency_ms = None
+        self.lead_forward_count = 0
+        if self.runtime_mode == "lead_python":
+            self.lead_runtime = LeadTorchRuntime(
+                lead_project_root=self.lead_project_root,
+                model_path=self.model_path,
+                device=self.runtime_device,
+                precision_mode=self.precision_mode,
+                disable_aux_heads=self.disable_aux_heads,
+                single_checkpoint=self.single_checkpoint,
+                strict_weight_load=self.lead_strict_weight_load,
+                python_site=self.lead_python_site,
+                torch_lib=self.lead_torch_lib,
+                force_timm_pretrained_off=self.lead_force_timm_pretrained_off,
+            )
+            extra_roots = [FilePath.cwd(), _SOURCE_ROOT.parents[2]]
+            if self.lead_runtime.load(extra_roots=extra_roots):
+                self.runtime_summary["ready"] = True
+                self.runtime_summary["blocking_reasons"] = []
+                self.runtime_summary["runtime_device"] = self.runtime_device
+                self.runtime_summary["checkpoint_files"] = self.lead_runtime.checkpoint_files
+                self.get_logger().info(
+                    "LEAD PyTorch runtime loaded "
+                    f"device={self.runtime_device} "
+                    f"checkpoints={len(self.lead_runtime.checkpoint_files)} "
+                    f"disable_aux_heads={self.disable_aux_heads}"
+                )
+                if self.lead_probe_on_startup:
+                    try:
+                        probe = self.lead_runtime.synthetic_forward()
+                        self.lead_forward_latency_ms = probe.latency_ms
+                        self.lead_forward_count = self.lead_runtime.forward_count
+                        self.get_logger().info(
+                            "LEAD PyTorch synthetic forward OK "
+                            f"device={probe.device} latency_ms={probe.latency_ms:.1f} "
+                            f"path_points={len(probe.path_xy)}"
+                        )
+                    except Exception as exc:
+                        self.lead_forward_error = f"{type(exc).__name__}: {exc}"
+                        self.runtime_summary["ready"] = False
+                        self.runtime_summary["blocking_reasons"] = [
+                            f"LEAD synthetic forward failed: {self.lead_forward_error}"
+                        ]
+                        self.get_logger().error(
+                            f"LEAD PyTorch synthetic forward failed: {self.lead_forward_error}"
+                        )
+            else:
+                self.lead_forward_error = self.lead_runtime.error
+                self.runtime_summary["ready"] = False
+                self.runtime_summary["blocking_reasons"] = [self.lead_runtime.error]
+                self.get_logger().warn(
+                    f"LEAD PyTorch runtime not ready: {self.lead_runtime.error}"
+                )
 
+        self.image_topics = unique_topics(self.image_topic, self.image_fallback_topics)
         self.subscriptions_ = [
-            self.create_subscription(
-                Image, self.image_topic, self.image_callback, qos_profile_sensor_data
-            ),
+            *[
+                self.create_subscription(
+                    Image, topic, self.image_callback, qos_profile_sensor_data
+                )
+                for topic in self.image_topics
+            ],
             self.create_subscription(
                 CameraInfo,
                 self.camera_info_topic,
@@ -147,7 +247,9 @@ class E2ETransfuserNode(Node):
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
         self.get_logger().info(
-            f"e2e_transfuser started runtime={self.runtime_mode} precision={self.precision_mode}"
+            "e2e_transfuser started "
+            f"runtime={self.runtime_mode} precision={self.precision_mode} "
+            f"sensor_input_mode={self.sensor_input_mode} images={self.image_topics}"
         )
 
     def image_callback(self, msg):
@@ -168,19 +270,54 @@ class E2ETransfuserNode(Node):
     def route_command_callback(self, msg):
         self.samples["route_command"].update(msg, self.get_clock().now())
 
+    @staticmethod
+    def clamp01(value):
+        return min(1.0, max(0.0, value))
+
+    def pointcloud_fresh(self, now):
+        return self.samples["pointcloud"].fresh(now, self.input_timeout_sec)
+
+    def active_sensor_input_mode(self, now):
+        if self.sensor_input_mode == "camera_lidar":
+            return "camera_lidar"
+        if self.sensor_input_mode == "camera_only":
+            return "camera_only"
+        return "camera_lidar" if self.pointcloud_fresh(now) else "camera_only"
+
+    def pointcloud_required(self, now):
+        return self.active_sensor_input_mode(now) == "camera_lidar"
+
+    def required_inputs(self, now):
+        required = ["image", "camera_info"]
+        if self.active_sensor_input_mode(now) == "camera_lidar":
+            required.append("odom")
+        if self.pointcloud_required(now):
+            required.append("pointcloud")
+        if self.require_target_point and self.active_sensor_input_mode(now) == "camera_lidar":
+            required.append("target_point")
+        return required
+
+    def missing_optional_inputs(self, now):
+        optional = []
+        if not self.pointcloud_required(now) and not self.pointcloud_fresh(now):
+            optional.append("pointcloud")
+        if self.active_sensor_input_mode(now) == "camera_only":
+            for name in ("odom", "target_point"):
+                if not self.samples[name].fresh(now, self.input_timeout_sec):
+                    optional.append(name)
+        return optional
+
     def missing_inputs(self, now):
         # target point は route proxy。開発時は require_target_point=false で入力待ちを緩められる。
-        required = ["image", "camera_info", "pointcloud", "odom"]
-        if self.require_target_point:
-            required.append("target_point")
         return [
             name
-            for name in required
+            for name in self.required_inputs(now)
             if not self.samples[name].fresh(now, self.input_timeout_sec)
         ]
 
     def timer_callback(self):
         now = self.get_clock().now()
+        active_sensor_input_mode = self.active_sensor_input_mode(now)
         missing = self.missing_inputs(now)
         input_ready = not missing
         confidence = 0.0
@@ -192,12 +329,72 @@ class E2ETransfuserNode(Node):
         if input_ready and self.runtime_mode == "mock":
             path, steering, curvature, speed_target = self.run_mock_runtime(now)
             confidence = 1.0
+            if active_sensor_input_mode == "camera_only":
+                confidence *= self.camera_only_confidence_scale
             self.publish_outputs(path, steering, curvature, speed_target, confidence)
+        elif input_ready and self.runtime_mode == "lead_python" and self.lead_runtime:
+            result = self.run_lead_python_runtime(now)
+            if result is not None:
+                path, steering, curvature, speed_target, confidence = result
+                if active_sensor_input_mode == "camera_only":
+                    confidence *= self.camera_only_confidence_scale
+                self.publish_outputs(path, steering, curvature, speed_target, confidence)
         elif input_ready:
             # 実モデル runtime は未接続でも、準備状態を confidence と status で可視化する。
             confidence = 0.2 if self.runtime_summary["ready"] else 0.05
+            if active_sensor_input_mode == "camera_only":
+                confidence *= self.camera_only_confidence_scale
 
-        self.publish_status(now, input_ready, missing, confidence)
+        self.publish_status(now, input_ready, missing, confidence, active_sensor_input_mode)
+
+    def run_lead_python_runtime(self, now):
+        if self.lead_runtime is None or not self.lead_runtime.loaded:
+            return None
+        image_msg = self.samples["image"].msg
+        if image_msg is None:
+            return None
+        try:
+            data = self.lead_runtime.build_data_from_ros(
+                image_msg=image_msg,
+                pointcloud_msg=self.samples["pointcloud"].msg,
+                speed_mps=self.current_speed_mps(),
+                target_xy=self.current_target_xy(),
+                command=self.current_route_command(),
+            )
+            forward = self.lead_runtime.forward(data)
+            path = self.path_from_xy(now, forward.path_xy)
+            steering, curvature = self.estimate_steering_from_path(path)
+            self.lead_forward_latency_ms = forward.latency_ms
+            self.lead_forward_count = self.lead_runtime.forward_count
+            self.lead_forward_error = ""
+            confidence = forward.confidence
+            return path, steering, curvature, forward.speed_target_mps, confidence
+        except Exception as exc:
+            self.lead_forward_error = f"{type(exc).__name__}: {exc}"
+            self.get_logger().warn(
+                f"LEAD PyTorch forward failed: {self.lead_forward_error}",
+                throttle_duration_sec=2.0,
+            )
+            return None
+
+    def current_target_xy(self):
+        target_msg = self.samples["target_point"].msg
+        if target_msg is not None:
+            return float(target_msg.point.x), float(target_msg.point.y)
+        return self.default_target_x_m, self.default_target_y_m
+
+    def current_speed_mps(self):
+        odom_msg = self.samples["odom"].msg
+        if odom_msg is None:
+            return 0.0
+        twist = odom_msg.twist.twist.linear
+        return math.sqrt(twist.x * twist.x + twist.y * twist.y + twist.z * twist.z)
+
+    def current_route_command(self):
+        msg = self.samples["route_command"].msg
+        if msg is None:
+            return "lane_follow"
+        return msg.data or "lane_follow"
 
     def run_mock_runtime(self, now):
         # mock は target point へ直線 waypoint を引く。ROS契約確認用で、走行品質評価用ではない。
@@ -234,6 +431,29 @@ class E2ETransfuserNode(Node):
         speed_target = max(1.0, math.hypot(vx, vy))
         return path, steering, curvature, speed_target
 
+    def path_from_xy(self, now, points_xy):
+        path = Path()
+        path.header.stamp = now.to_msg()
+        path.header.frame_id = self.output_frame
+        for x, y in points_xy[: self.max_waypoints]:
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x = float(x)
+            pose.pose.position.y = float(y)
+            pose.pose.position.z = 0.0
+            pose.pose.orientation.w = 1.0
+            path.poses.append(pose)
+        return path
+
+    def estimate_steering_from_path(self, path):
+        if len(path.poses) < 2:
+            return 0.0, 0.0
+        target = path.poses[min(2, len(path.poses) - 1)].pose.position
+        distance = max(0.1, math.hypot(target.x, target.y))
+        curvature = 2.0 * target.y / max(distance * distance, 0.1)
+        steering = math.atan(self.wheel_base_m * curvature)
+        return steering, curvature
+
     def publish_outputs(self, path, steering, curvature, speed_target, confidence):
         self.path_pub.publish(path)
         self.steering_pub.publish(Float32(data=float(steering)))
@@ -260,7 +480,7 @@ class E2ETransfuserNode(Node):
         marker_array.markers.append(line)
         return marker_array
 
-    def publish_status(self, now, input_ready, missing, confidence):
+    def publish_status(self, now, input_ready, missing, confidence, active_sensor_input_mode):
         # GUI / replay tools から読めるよう、node状態とruntime診断をJSON文字列で流す。
         ages = {
             name: sample.age_sec(now)
@@ -272,9 +492,14 @@ class E2ETransfuserNode(Node):
             "model": self.model_variant,
             "runtime": self.runtime_mode,
             "precision": self.precision_mode,
+            "runtime_device": self.runtime_device,
             "model_loaded": self.runtime_mode == "mock" or self.runtime_summary["ready"],
             "input_ready": input_ready,
             "missing_inputs": missing,
+            "missing_optional_inputs": self.missing_optional_inputs(now),
+            "configured_sensor_input_mode": self.sensor_input_mode,
+            "active_sensor_input_mode": active_sensor_input_mode,
+            "pointcloud_required": self.pointcloud_required(now),
             "input_age_sec": ages,
             "confidence": confidence,
             "frame_id": self.output_frame,
@@ -284,6 +509,9 @@ class E2ETransfuserNode(Node):
             "allow_int8": self.allow_int8,
             "runtime_ready": self.runtime_summary["ready"],
             "runtime_blocking_reasons": self.runtime_summary["blocking_reasons"],
+            "lead_forward_count": self.lead_forward_count,
+            "lead_forward_latency_ms": self.lead_forward_latency_ms,
+            "lead_forward_error": self.lead_forward_error,
         }
         self.status_pub.publish(String(data=json.dumps(status, sort_keys=True)))
 
