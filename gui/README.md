@@ -6,7 +6,9 @@
 
 - **地図表示**: OpenStreetMap + Leafletを使用（APIキー不要・無料）
 - **ルート検索**: OpenRouteServiceを使用（APIキー不要・無料）
+- GUI 内ボタンによる項目別 Demo / ROS2 データソース切り替え
 - ステータス表示（車速、前方最短距離、障害物数、モード、GPS）
+- shadow-mode メトリクス表示（操舵差分、曲率差分、warning / intervention score など）
 - レーザースキャンデータの可視化
 - lane / road edge のオーバーレイ表示
 - 検知された obstacle マーカー表示
@@ -84,25 +86,30 @@ uv run main.py
 ./gui/run_gui.sh
 ```
 
-デモデータではなく ROS2 トピックを読みたい場合は、起動時に切り替えできます。
+GUI 右側の `Camera`、`Scan`、`Lane`、`Objects`、`Speed`、`Mode`、`GPS`、`Shadow` ボタンで、表示データを項目ごとに Demo / ROS2 へ切り替えできます。各ボタンは、対応する ROS2 トピックのメッセージを実際に受信するまで無効です。
+
+起動時点から ROS2 優先にしたい場合は、以下のように指定します。トピックが届くまでは Demo 表示で起動し、受信できた項目から ROS2 表示に切り替わります。
 
 ```bash
 uv run main.py --data-source ros2
 ```
 
-ROS2 モードでは、実行環境に `rclpy`、`sensor_msgs`、`std_msgs` が入っている必要があります。
+ROS2 モードでは、実行環境に `rclpy`、`sensor_msgs`、`std_msgs`、`numpy` が入っている必要があります。
 
 使用するトピック名も引数で上書きできます。
 
 ```bash
 uv run main.py \
   --data-source ros2 \
+  --ros-camera-image-topic /sensing/camera/camera0/image_rect_color \
+  --ros-camera-info-topic /sensing/camera/camera0/camera_info \
   --ros-scan-topic /scan_surroundings \
   --ros-lane-topic /scan \
   --ros-objects-topic /detected_objects \
   --ros-speed-topic /vehicle/speed_kmh \
   --ros-mode-topic /vehicle/mode \
-  --ros-gps-topic /vehicle/gps_status
+  --ros-gps-topic /vehicle/gps_status \
+  --ros-shadow-summary-topic /shadow/metrics/summary
 ```
 
 `--ros-objects-topic` は `std_msgs/String` で、JSON 配列を想定しています。各要素は以下の形式です。
@@ -116,11 +123,29 @@ uv run main.py \
 
 そのほかの想定メッセージ型:
 
+- `--ros-camera-image-topic`: `sensor_msgs/msg/Image`
+- `--ros-camera-info-topic`: `sensor_msgs/msg/CameraInfo`
 - `--ros-scan-topic`: `sensor_msgs/msg/LaserScan`
 - `--ros-lane-topic`: `sensor_msgs/msg/LaserScan`
 - `--ros-speed-topic`: `std_msgs/msg/Float32`
 - `--ros-mode-topic`: `std_msgs/msg/String`
 - `--ros-gps-topic`: `std_msgs/msg/String`
+
+shadow-mode 欄は以下の `std_msgs/msg/Float32` と `std_msgs/msg/String` を既定で購読します。
+
+- `/shadow/ego/speed`
+- `/shadow/ego/yaw_rate`
+- `/shadow/ego/curvature`
+- `/shadow/virtual/steering_proxy`
+- `/shadow/virtual/curvature`
+- `/shadow/virtual/warning_score`
+- `/shadow/metrics/driver_steering_proxy`
+- `/shadow/metrics/steering_delta`
+- `/shadow/metrics/curvature_delta`
+- `/shadow/metrics/intervention_score`
+- `/shadow/metrics/summary`
+
+`gui/run_gui.sh` から起動する場合は、`ROS_CAMERA_IMAGE_TOPIC=/foo ROS_CAMERA_INFO_TOPIC=/bar ./gui/run_gui.sh` や `ROS_SHADOW_INTERVENTION_SCORE_TOPIC=/foo ./gui/run_gui.sh` のように環境変数で上書きできます。
 
 GUI の見た目は `gui/config/ui.yaml` で調整できます。必要なら `--ui-config` で別ファイルも指定できます。
 

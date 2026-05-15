@@ -5,6 +5,7 @@ import sys
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[1]
 if (_SOURCE_ROOT / "e2e_transfuser").exists():
+    # symlink-install 時は実行ファイルだけが lib/ に見えるため、source 側 package も探索する。
     sys.path.insert(0, str(_SOURCE_ROOT))
 
 from e2e_transfuser.environment import dumps_summary, inspect_lead_environment
@@ -59,6 +60,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    # checkpoint を実際に load せず、パス・依存・INT8ガードだけを先に確認する。
     summary = inspect_lead_environment(
         lead_project_root=args.lead_project_root,
         model_path=args.model_path,
@@ -71,6 +73,7 @@ def main():
     )
     print(dumps_summary(summary))
 
+    # CI や起動前チェックで使う場合だけ non-zero にする。通常は診断表示を優先する。
     if args.strict and not args.dry_run and not summary["ready"]:
         return 2
     return 0

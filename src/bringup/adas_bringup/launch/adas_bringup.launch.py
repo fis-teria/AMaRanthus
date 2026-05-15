@@ -8,7 +8,9 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    use_adas_description = LaunchConfiguration("use_adas_description")
     use_livox_rviz = LaunchConfiguration("use_livox_rviz")
+    use_sim_time = LaunchConfiguration("use_sim_time")
     pointcloud_topic = LaunchConfiguration("pointcloud_topic")
     scan_topic = LaunchConfiguration("scan_topic")
     pointcloud_to_laserscan_param_file = LaunchConfiguration(
@@ -23,8 +25,25 @@ def generate_launch_description():
     lane_detection_output_frame = LaunchConfiguration("lane_detection_output_frame")
 
     livox_share = FindPackageShare("livox_ros_driver2")
+    adas_description_share = FindPackageShare("adas_description")
     adas_bringup_share = FindPackageShare("adas_bringup")
     livox_lane_detection_share = FindPackageShare("livox_lane_detection")
+
+    adas_description_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [
+                    adas_description_share,
+                    "launch",
+                    "adas_description.launch.py",
+                ]
+            )
+        ),
+        launch_arguments={
+            "use_sim_time": use_sim_time,
+        }.items(),
+        condition=IfCondition(use_adas_description),
+    )
 
     livox_msg_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -76,6 +95,16 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
+                "use_adas_description",
+                default_value="true",
+                description="true のとき ADAS センサの TF を publish します。",
+            ),
+            DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="false",
+                description="ADAS description の robot_state_publisher に渡す use_sim_time。",
+            ),
+            DeclareLaunchArgument(
                 "use_livox_rviz",
                 default_value="true",
                 description=(
@@ -126,6 +155,7 @@ def generate_launch_description():
                 default_value="",
                 description="livox_lane_detection の出力フレーム上書き設定",
             ),
+            adas_description_launch,
             livox_msg_launch,
             livox_rviz_launch,
             livox_lane_detection_launch,

@@ -10,6 +10,9 @@ LIBREALSENSE_VERSION="${LIBREALSENSE_VERSION:-v2.55.1}"
 LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION:-v1.2.4}"
 LIBTORCH_VERSION="${LIBTORCH_VERSION:-2.4.1}"
 LIBTORCH_VARIANT="${LIBTORCH_VARIANT:-cpu}"
+ACADOS_VERSION="${ACADOS_VERSION:-v0.5.3}"
+ACADOS_TERA_RENDERER_VERSION="${ACADOS_TERA_RENDERER_VERSION:-v0.2.0}"
+CUDA_VERSION="${CUDA_VERSION:-12.8}"
 INSTALL_CUDA="${INSTALL_CUDA:-0}"
 INSTALL_NVIDIA_CONTAINER_TOOLKIT="${INSTALL_NVIDIA_CONTAINER_TOOLKIT:-0}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
@@ -20,6 +23,7 @@ INSTALL_UV="${INSTALL_UV:-1}"
 SKIP_LIBREALSENSE="${SKIP_LIBREALSENSE:-0}"
 SKIP_LIVOX_SDK2="${SKIP_LIVOX_SDK2:-0}"
 SKIP_LIBTORCH="${SKIP_LIBTORCH:-0}"
+SKIP_ACADOS="${SKIP_ACADOS:-0}"
 
 usage() {
   cat <<'EOF'
@@ -28,7 +32,7 @@ Usage: ./setup/ubuntu_setup.sh [options]
 Reproduces the Docker development environment on an Ubuntu host as closely as possible.
 
 Options:
-  --with-cuda                       Install Ubuntu's CUDA toolkit package.
+  --with-cuda                       Install NVIDIA CUDA Toolkit packages.
   --with-nvidia-smi                Install an available nvidia-utils package.
   --with-nvidia-driver            Install NVIDIA driver kernel modules for current kernel.
   --with-nvidia-container-toolkit  Install NVIDIA Container Toolkit for Docker GPU passthrough.
@@ -38,15 +42,18 @@ Options:
   --libtorch-variant <cpu|cu118|cu121>
                                    Select the libtorch package variant to install.
   --skip-libtorch                  Skip libtorch installation.
+  --skip-acados                    Skip acados source build.
   --skip-librealsense              Skip librealsense source build.
   --skip-livox-sdk2                Skip Livox-SDK2 source build.
   -h, --help                       Show this help.
 
 Environment variables:
   ROS_DISTRO, ROS_APT_CODENAME, LIBREALSENSE_VERSION, LIVOX_SDK2_VERSION,
-  LIBTORCH_VERSION, LIBTORCH_VARIANT, INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
+  LIBTORCH_VERSION, LIBTORCH_VARIANT, ACADOS_VERSION, ACADOS_TERA_RENDERER_VERSION,
+  CUDA_VERSION,
+  INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
   INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
-  SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH
+  SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH, SKIP_ACADOS
 
 Examples:
   ./setup/ubuntu_setup.sh
@@ -84,6 +91,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-libtorch)
       SKIP_LIBTORCH=1
+      ;;
+    --skip-acados)
+      SKIP_ACADOS=1
       ;;
     --skip-librealsense)
       SKIP_LIBREALSENSE=1
@@ -214,6 +224,7 @@ install_base_packages() {
     python3-colcon-common-extensions \
     python3-colcon-mixin \
     python3-rosdep \
+    python3-venv \
     python3-vcstool \
     dbus-x11 \
     ibus \
@@ -230,12 +241,27 @@ install_base_packages() {
     libx11-dev \
     libxi-dev \
     libxt-dev \
+    libcgal-dev \
+    libcpprest-dev \
+    libcrypto++-dev \
     libeigen3-dev \
-    libpcl-dev
+    liblttng-ust-dev \
+    libnl-genl-3-dev \
+    libpcl-dev \
+    libpng++-dev \
+    libpugixml-dev \
+    librange-v3-dev \
+    python3-flask \
+    python3-jsonschema \
+    python3-pandas \
+    python3-torch \
+    chrony \
+    sysstat
 }
 
 install_repository_prerequisites() {
   log "Installing apt repository prerequisites"
+  fix_docker_apt_signed_by_conflict
   ${SUDO} apt-get update
   apt_install \
     ca-certificates \
@@ -243,6 +269,29 @@ install_repository_prerequisites() {
     gnupg2 \
     lsb-release \
     software-properties-common
+}
+
+fix_docker_apt_signed_by_conflict() {
+  local docker_list="/etc/apt/sources.list.d/docker.list"
+
+  if [[ ! -f "${docker_list}" ]]; then
+    return
+  fi
+
+  if ! grep -Fq "download.docker.com/linux/ubuntu" "${docker_list}"; then
+    return
+  fi
+
+  if ! grep -Fq "docker.asc" "${docker_list}" || ! grep -Fq "docker.gpg" "${docker_list}"; then
+    return
+  fi
+
+  warn "Docker apt repository has conflicting Signed-By entries; keeping docker.asc and backing up ${docker_list}"
+  ${SUDO} cp "${docker_list}" "${docker_list}.bak-$(date +%Y%m%d%H%M%S)"
+  awk '
+    /download\.docker\.com\/linux\/ubuntu/ && /docker\.gpg/ { next }
+    { print }
+  ' "${docker_list}" | ${SUDO} tee "${docker_list}" >/dev/null
 }
 
 configure_ros2_repository() {
@@ -276,11 +325,51 @@ install_ros_packages() {
     "ros-${ROS_DISTRO}-tf2-msgs" \
     "ros-${ROS_DISTRO}-teleop-twist-keyboard" \
     "ros-${ROS_DISTRO}-diagnostic-updater" \
+    "ros-${ROS_DISTRO}-diagnostic-aggregator" \
     "ros-${ROS_DISTRO}-robot-localization" \
     "ros-${ROS_DISTRO}-imu-filter-madgwick" \
+    "ros-${ROS_DISTRO}-ament-clang-format" \
+    "ros-${ROS_DISTRO}-aruco" \
+    "ros-${ROS_DISTRO}-can-msgs" \
+    "ros-${ROS_DISTRO}-generate-parameter-library" \
+    "ros-${ROS_DISTRO}-geodesy" \
+    "ros-${ROS_DISTRO}-geographic-info" \
+    "ros-${ROS_DISTRO}-geometric-shapes" \
+    "ros-${ROS_DISTRO}-grid-map-costmap-2d" \
+    "ros-${ROS_DISTRO}-grid-map-pcl" \
+    "ros-${ROS_DISTRO}-grid-map-rviz-plugin" \
+    "ros-${ROS_DISTRO}-lanelet2-core" \
+    "ros-${ROS_DISTRO}-lanelet2-io" \
+    "ros-${ROS_DISTRO}-lanelet2-maps" \
+    "ros-${ROS_DISTRO}-lanelet2-projection" \
+    "ros-${ROS_DISTRO}-lanelet2-python" \
+    "ros-${ROS_DISTRO}-lanelet2-routing" \
+    "ros-${ROS_DISTRO}-lanelet2-traffic-rules" \
+    "ros-${ROS_DISTRO}-lanelet2-validation" \
+    "ros-${ROS_DISTRO}-magic-enum" \
+    "ros-${ROS_DISTRO}-nmea-msgs" \
+    "ros-${ROS_DISTRO}-osqp-vendor" \
+    "ros-${ROS_DISTRO}-point-cloud-msg-wrapper" \
+    "ros-${ROS_DISTRO}-pointcloud-to-laserscan" \
+    "ros-${ROS_DISTRO}-proxsuite" \
+    "ros-${ROS_DISTRO}-radar-msgs" \
+    "ros-${ROS_DISTRO}-rclpy-message-converter" \
+    "ros-${ROS_DISTRO}-ros-testing" \
+    "ros-${ROS_DISTRO}-rosbag2-storage-mcap" \
+    "ros-${ROS_DISTRO}-rqt-robot-monitor" \
+    "ros-${ROS_DISTRO}-rqt-runtime-monitor" \
     "ros-${ROS_DISTRO}-rmw-cyclonedds-cpp" \
     "ros-${ROS_DISTRO}-rtabmap" \
-    "ros-${ROS_DISTRO}-rtabmap-ros"
+    "ros-${ROS_DISTRO}-rtabmap-ros" \
+    "ros-${ROS_DISTRO}-septentrio-gnss-driver" \
+    "ros-${ROS_DISTRO}-sophus" \
+    "ros-${ROS_DISTRO}-tensorrt-cmake-module" \
+    "ros-${ROS_DISTRO}-tf-transformations" \
+    "ros-${ROS_DISTRO}-tl-expected" \
+    "ros-${ROS_DISTRO}-topic-tools" \
+    "ros-${ROS_DISTRO}-ublox-msgs" \
+    "ros-${ROS_DISTRO}-udp-msgs" \
+    "ros-${ROS_DISTRO}-xacro"
 }
 
 install_cuda_packages() {
@@ -288,9 +377,44 @@ install_cuda_packages() {
     return
   fi
 
-  log "Installing Ubuntu CUDA toolkit package"
+  local cuda_arch cuda_version_dash
+  case "$(uname -m)" in
+    x86_64)
+      cuda_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      cuda_arch="sbsa"
+      ;;
+    *)
+      warn "Unsupported architecture for NVIDIA CUDA apt repository: $(uname -m). Skipping CUDA install."
+      return
+      ;;
+  esac
+  cuda_version_dash="${CUDA_VERSION//./-}"
+
+  log "Configuring NVIDIA CUDA apt repository for CUDA ${CUDA_VERSION}"
+  ${SUDO} rm -f /etc/apt/sources.list.d/cuda.list
+  wget -O /tmp/cuda-keyring_1.1-1_all.deb \
+    "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/${cuda_arch}/cuda-keyring_1.1-1_all.deb"
+  ${SUDO} dpkg -i /tmp/cuda-keyring_1.1-1_all.deb
+  rm -f /tmp/cuda-keyring_1.1-1_all.deb
+
+  log "Installing NVIDIA CUDA ${CUDA_VERSION} development packages"
   ${SUDO} apt-get update
-  apt_install nvidia-cuda-toolkit
+  apt_install \
+    "cuda-command-line-tools-${cuda_version_dash}" \
+    "cuda-minimal-build-${cuda_version_dash}" \
+    "libcusparse-dev-${cuda_version_dash}" \
+    "libcublas-dev-${cuda_version_dash}" \
+    "libcurand-dev-${cuda_version_dash}" \
+    "cuda-nvml-dev-${cuda_version_dash}" \
+    "cuda-nvrtc-dev-${cuda_version_dash}" \
+    "libnpp-dev-${cuda_version_dash}" \
+    "libnvjpeg-dev-${cuda_version_dash}"
+
+  if [[ "${cuda_arch}" == "x86_64" ]]; then
+    apt_install "cuda-nvprof-${cuda_version_dash}" || true
+  fi
 }
 
 install_nvidia_smi() {
@@ -485,6 +609,54 @@ install_livox_sdk2() {
   rm -rf /tmp/Livox-SDK2
 }
 
+install_acados() {
+  if [[ "${SKIP_ACADOS}" == "1" ]]; then
+    return
+  fi
+
+  local tera_arch
+  case "$(uname -m)" in
+    x86_64)
+      tera_arch="amd64"
+      ;;
+    aarch64|arm64)
+      tera_arch="arm64"
+      ;;
+    *)
+      warn "Unsupported architecture for acados tera renderer: $(uname -m). Skipping acados install."
+      return
+      ;;
+  esac
+
+  log "Building acados ${ACADOS_VERSION} into /opt/acados"
+  ${SUDO} rm -rf /opt/acados
+  ${SUDO} git clone \
+    --depth 1 \
+    --branch "${ACADOS_VERSION}" \
+    --recursive \
+    --shallow-submodules \
+    https://github.com/acados/acados.git \
+    /opt/acados
+
+  ${SUDO} cmake -S /opt/acados -B /opt/acados/build \
+    -DACADOS_WITH_QPOASES=ON \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  ${SUDO} cmake --build /opt/acados/build --target install -j"$(nproc)"
+
+  ${SUDO} mkdir -p /opt/acados/bin
+  ${SUDO} curl -fsSL \
+    "https://github.com/acados/tera_renderer/releases/download/${ACADOS_TERA_RENDERER_VERSION}/t_renderer-${ACADOS_TERA_RENDERER_VERSION}-linux-${tera_arch}" \
+    -o /opt/acados/bin/t_renderer
+  ${SUDO} chmod 0755 /opt/acados/bin/t_renderer
+
+  ${SUDO} python3 -m venv /opt/acados/.venv
+  ${SUDO} /opt/acados/.venv/bin/pip install --upgrade pip
+  ${SUDO} /opt/acados/.venv/bin/pip install casadi sympy
+  ${SUDO} /opt/acados/.venv/bin/pip install -e /opt/acados/interfaces/acados_template
+
+  ${SUDO} ldconfig
+}
+
 setup_rosdep() {
   log "Initializing rosdep"
   ${SUDO} rosdep init >/dev/null 2>&1 || true
@@ -570,6 +742,7 @@ main() {
   install_libtorch
   install_livrealsense
   install_livox_sdk2
+  install_acados
   setup_rosdep
   setup_colcon_metadata
   install_cyclonedds_config

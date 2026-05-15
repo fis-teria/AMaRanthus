@@ -9,13 +9,17 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>adas_bringup</exec_depend>
+  <exec_depend>autoware_launch</exec_depend>
+  <exec_depend>fast_lio</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>adas_bringup</exec_depend>
   <exec_depend>livox_lane_detection</exec_depend>
   <exec_depend>shadow_mode_ego_estimation</exec_depend>
   <exec_depend>shadow_mode_metrics</exec_depend>
   <exec_depend>shadow_mode_virtual_control</exec_depend>
+  <exec_depend>topic_tools</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

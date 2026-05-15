@@ -1,5 +1,13 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -8,16 +16,103 @@ from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
+def _as_bool(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _optional_adas_pipeline(context):
+    if not _as_bool(LaunchConfiguration("use_adas_bringup").perform(context)):
+        return []
+
+    adas_bringup_share = get_package_share_directory("adas_bringup")
+
+    pointcloud_to_laserscan_param_file = LaunchConfiguration(
+        "pointcloud_to_laserscan_param_file"
+    ).perform(context)
+    if not pointcloud_to_laserscan_param_file:
+        pointcloud_to_laserscan_param_file = os.path.join(
+            adas_bringup_share,
+            "config",
+            "pointcloud_to_laserscan.yaml",
+        )
+
+    lane_detection_model_path = LaunchConfiguration("lane_detection_model_path").perform(context)
+    if not lane_detection_model_path:
+        lane_detection_share = get_package_share_directory("livox_lane_detection")
+        lane_detection_model_path = os.path.join(
+            lane_detection_share,
+            "model",
+            "livox_lane_det.ts",
+        )
+
+    return [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    adas_bringup_share,
+                    "launch",
+                    "adas_bringup.launch.py",
+                )
+            ),
+            launch_arguments={
+                "use_livox_rviz": LaunchConfiguration("use_livox_rviz"),
+                "pointcloud_topic": LaunchConfiguration("pointcloud_topic"),
+                "scan_topic": LaunchConfiguration("scan_topic"),
+                "pointcloud_to_laserscan_param_file": pointcloud_to_laserscan_param_file,
+                "lane_detection_model_path": lane_detection_model_path,
+                "lane_detection_colored_cloud_topic": LaunchConfiguration(
+                    "lane_detection_colored_cloud_topic"
+                ),
+                "lane_detection_scan_topic": LaunchConfiguration("lane_detection_scan_topic"),
+                "lane_detection_objects_topic": LaunchConfiguration("lane_detection_objects_topic"),
+                "lane_detection_output_frame": LaunchConfiguration(
+                    "lane_detection_output_frame"
+                ),
+            }.items(),
+        )
+    ]
+
+
+def _optional_fast_lio(context):
+    if not _as_bool(LaunchConfiguration("use_fast_lio").perform(context)):
+        return []
+
+    fast_lio_share = get_package_share_directory("fast_lio")
+
+    fast_lio_config_path = LaunchConfiguration("fast_lio_config_path").perform(context)
+    if not fast_lio_config_path:
+        fast_lio_config_path = os.path.join(fast_lio_share, "config")
+
+    fast_lio_rviz_cfg = LaunchConfiguration("fast_lio_rviz_cfg").perform(context)
+    if not fast_lio_rviz_cfg:
+        fast_lio_rviz_cfg = os.path.join(fast_lio_share, "rviz", "fastlio.rviz")
+
+    return [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    fast_lio_share,
+                    "launch",
+                    "mapping.launch.py",
+                )
+            ),
+            launch_arguments={
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "config_path": fast_lio_config_path,
+                "config_file": LaunchConfiguration("fast_lio_config_file"),
+                "rviz": LaunchConfiguration("use_fast_lio_rviz"),
+                "rviz_cfg": fast_lio_rviz_cfg,
+            }.items(),
+        )
+    ]
+
+
 def generate_launch_description():
-    use_adas_bringup = LaunchConfiguration("use_adas_bringup")
-    use_livox_rviz = LaunchConfiguration("use_livox_rviz")
     use_ego_estimation = LaunchConfiguration("use_ego_estimation")
     use_virtual_control = LaunchConfiguration("use_virtual_control")
     use_metrics = LaunchConfiguration("use_metrics")
     record_shadow_bag = LaunchConfiguration("record_shadow_bag")
 
-    pointcloud_topic = LaunchConfiguration("pointcloud_topic")
-    scan_topic = LaunchConfiguration("scan_topic")
     virtual_input_mode = LaunchConfiguration("virtual_input_mode")
     virtual_pointcloud_topic = LaunchConfiguration("virtual_pointcloud_topic")
     pointcloud_z_min = LaunchConfiguration("pointcloud_z_min")
@@ -28,16 +123,7 @@ def generate_launch_description():
     virtual_output_frame = LaunchConfiguration("virtual_output_frame")
 
     shadow_mode_param_file = LaunchConfiguration("shadow_mode_param_file")
-    pointcloud_to_laserscan_param_file = LaunchConfiguration(
-        "pointcloud_to_laserscan_param_file"
-    )
-    lane_detection_model_path = LaunchConfiguration("lane_detection_model_path")
-    lane_detection_colored_cloud_topic = LaunchConfiguration(
-        "lane_detection_colored_cloud_topic"
-    )
     lane_detection_scan_topic = LaunchConfiguration("lane_detection_scan_topic")
-    lane_detection_objects_topic = LaunchConfiguration("lane_detection_objects_topic")
-    lane_detection_output_frame = LaunchConfiguration("lane_detection_output_frame")
 
     bag_output = LaunchConfiguration("bag_output")
     bag_record_regex = LaunchConfiguration("bag_record_regex")
@@ -45,28 +131,6 @@ def generate_launch_description():
     metrics_csv_path = LaunchConfiguration("metrics_csv_path")
 
     shadow_bringup_share = FindPackageShare("shadow_mode_bringup")
-    adas_bringup_share = FindPackageShare("adas_bringup")
-    livox_lane_detection_share = FindPackageShare("livox_lane_detection")
-
-    adas_pipeline = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [adas_bringup_share, "launch", "adas_bringup.launch.py"]
-            )
-        ),
-        launch_arguments={
-            "use_livox_rviz": use_livox_rviz,
-            "pointcloud_topic": pointcloud_topic,
-            "scan_topic": scan_topic,
-            "pointcloud_to_laserscan_param_file": pointcloud_to_laserscan_param_file,
-            "lane_detection_model_path": lane_detection_model_path,
-            "lane_detection_colored_cloud_topic": lane_detection_colored_cloud_topic,
-            "lane_detection_scan_topic": lane_detection_scan_topic,
-            "lane_detection_objects_topic": lane_detection_objects_topic,
-            "lane_detection_output_frame": lane_detection_output_frame,
-        }.items(),
-        condition=IfCondition(use_adas_bringup),
-    )
 
     ego_estimation = Node(
         package="shadow_mode_ego_estimation",
@@ -162,6 +226,39 @@ def generate_launch_description():
                 description="ADAS 前段を起動する場合に Livox RViz launch を使うかどうか。",
             ),
             DeclareLaunchArgument(
+                "use_fast_lio",
+                default_value=LaunchConfiguration("use_adas_bringup"),
+                description=(
+                    "FAST-LIO2 (fast_lio mapping.launch.py) を起動します。"
+                    "既定では use_adas_bringup と同じ値です。"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="false",
+                description="FAST-LIO2 に渡す use_sim_time。",
+            ),
+            DeclareLaunchArgument(
+                "fast_lio_config_path",
+                default_value="",
+                description="FAST-LIO2 config ディレクトリ。空なら fast_lio の既定 config を使います。",
+            ),
+            DeclareLaunchArgument(
+                "fast_lio_config_file",
+                default_value="mid360.yaml",
+                description="FAST-LIO2 の config ファイル名。",
+            ),
+            DeclareLaunchArgument(
+                "use_fast_lio_rviz",
+                default_value="false",
+                description="FAST-LIO2 付属 RViz を起動します。",
+            ),
+            DeclareLaunchArgument(
+                "fast_lio_rviz_cfg",
+                default_value="",
+                description="FAST-LIO2 RViz config。空なら fast_lio の既定 RViz config を使います。",
+            ),
+            DeclareLaunchArgument(
                 "use_ego_estimation",
                 default_value="true",
                 description="shadow_mode_ego_estimation を起動します。",
@@ -238,17 +335,19 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "pointcloud_to_laserscan_param_file",
-                default_value=PathJoinSubstitution(
-                    [adas_bringup_share, "config", "pointcloud_to_laserscan.yaml"]
+                default_value="",
+                description=(
+                    "pointcloud_to_laserscan のパラメータファイル。"
+                    "空なら use_adas_bringup=true 時に adas_bringup の既定ファイルを使います。"
                 ),
-                description="pointcloud_to_laserscan のパラメータファイル。",
             ),
             DeclareLaunchArgument(
                 "lane_detection_model_path",
-                default_value=PathJoinSubstitution(
-                    [livox_lane_detection_share, "model", "livox_lane_det.ts"]
+                default_value="",
+                description=(
+                    "livox_lane_detection が使用する TorchScript モデルパス。"
+                    "空なら use_adas_bringup=true 時に livox_lane_detection の既定モデルを使います。"
                 ),
-                description="livox_lane_detection が使用する TorchScript モデルパス。",
             ),
             DeclareLaunchArgument(
                 "lane_detection_colored_cloud_topic",
@@ -297,7 +396,8 @@ def generate_launch_description():
                 default_value="(/shadow/.*|/livox/lane_detection/.*|/Odometry|/path|/scan)",
                 description="record_shadow_bag=true のとき記録する topic regex。",
             ),
-            adas_pipeline,
+            OpaqueFunction(function=_optional_adas_pipeline),
+            OpaqueFunction(function=_optional_fast_lio),
             ego_estimation,
             virtual_control,
             metrics,

@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    min_ok_rate: 9.0
+    min_warn_rate: 8.0
+    max_ok_rate: 60.0
+    max_warn_rate: 90.0
+    diag_publish_rate: 10.0

@@ -9,6 +9,7 @@ import time
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[1]
 if (_SOURCE_ROOT / "e2e_transfuser").exists():
+    # symlink-install と source 実行の両方で共通 helper を import できるようにする。
     sys.path.insert(0, str(_SOURCE_ROOT))
 
 from e2e_transfuser.environment import inspect_lead_environment
@@ -57,6 +58,7 @@ def build_parser():
 
 
 def run_mock_forward(iterations, warmup):
+    # 実モデルではなく、ROS adapter 側の軽い path/proxy 計算コストだけを測る。
     samples_ms = []
     total = max(0, warmup) + max(1, iterations)
     for index in range(total):
@@ -75,11 +77,13 @@ def run_mock_forward(iterations, warmup):
             raise RuntimeError("unexpected mock benchmark state")
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         if index >= warmup:
+            # warmup は Python import/cache 等の初回ゆらぎを測定から外す。
             samples_ms.append(elapsed_ms)
     return samples_ms
 
 
 def summarize_samples(samples_ms):
+    # 実車向けには平均だけでなく p95 を見る。10Hz維持には tail latency が効くため。
     if not samples_ms:
         return {
             "latency_ms_mean": None,
@@ -123,6 +127,7 @@ def write_csv(path, payload):
 
 def main():
     args = build_parser().parse_args()
+    # まず runtime の準備状態を確認し、未配置 checkpoint を forward 測定と誤認しないようにする。
     summary = inspect_lead_environment(
         lead_project_root=args.lead_project_root,
         model_path=args.model_path,
@@ -140,8 +145,10 @@ def main():
         samples_ms = run_mock_forward(args.iterations, args.warmup)
         measurement_type = "mock_adapter_overhead"
     elif not args.dry_run and args.runtime_mode != "mock" and not summary["ready"]:
+        # 依存や checkpoint が足りない場合は、測定せず readiness 結果として残す。
         measurement_type = "not_run_runtime_not_ready"
     elif not args.dry_run:
+        # LEAD 本体の forward hook は今後差し込む。現段階で測ったことにはしない。
         measurement_type = "not_run_model_forward_not_implemented"
         summary["blocking_reasons"].append(
             "model forward benchmark hook is ready, but LEAD model invocation is not implemented"

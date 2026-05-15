@@ -6,6 +6,7 @@ import sys
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[1]
 if (_SOURCE_ROOT / "e2e_transfuser").exists():
+    # symlink-install 時も source 側 helper package を import できるようにする。
     sys.path.insert(0, str(_SOURCE_ROOT))
 
 import rclpy
@@ -25,6 +26,7 @@ def stamp_to_float(stamp):
 
 
 class LatestSample:
+    # 各入力 topic の最新値と受信時刻を持ち、stale 判定を共通化する。
     def __init__(self):
         self.msg = None
         self.received_at = None
@@ -47,6 +49,7 @@ class E2ETransfuserNode(Node):
     def __init__(self):
         super().__init__("e2e_transfuser")
 
+        # LEAD runtime と軽量化設定。mock 以外は status に準備状態を出して node は落とさない。
         self.runtime_mode = self.declare_parameter("runtime_mode", "mock").value
         self.precision_mode = self.declare_parameter("precision_mode", "fp32").value
         self.model_variant = self.declare_parameter("model_variant", "tfv6_resnet34").value
@@ -86,6 +89,7 @@ class E2ETransfuserNode(Node):
         self.single_checkpoint = bool(self.declare_parameter("single_checkpoint", True).value)
         self.allow_int8 = bool(self.declare_parameter("allow_int8", False).value)
 
+        # camera + LiDAR + odometry + route proxy を揃えてから E2E 出力する。
         self.samples = {
             "image": LatestSample(),
             "camera_info": LatestSample(),
@@ -95,6 +99,7 @@ class E2ETransfuserNode(Node):
             "route_command": LatestSample(),
         }
 
+        # 起動時に一度だけ環境診断する。重い checkpoint load はここでは行わない。
         self.runtime_summary = inspect_lead_environment(
             lead_project_root=self.lead_project_root,
             model_path=self.model_path,
@@ -129,6 +134,7 @@ class E2ETransfuserNode(Node):
             self.create_subscription(String, self.route_command_topic, self.route_command_callback, 10),
         ]
 
+        # 出力は shadow-mode 専用。実車制御 command には接続しない。
         self.path_pub = self.create_publisher(Path, "/shadow/e2e/path", 10)
         self.steering_pub = self.create_publisher(Float32, "/shadow/e2e/steering_proxy", 10)
         self.curvature_pub = self.create_publisher(Float32, "/shadow/e2e/curvature", 10)
@@ -163,6 +169,7 @@ class E2ETransfuserNode(Node):
         self.samples["route_command"].update(msg, self.get_clock().now())
 
     def missing_inputs(self, now):
+        # target point は route proxy。開発時は require_target_point=false で入力待ちを緩められる。
         required = ["image", "camera_info", "pointcloud", "odom"]
         if self.require_target_point:
             required.append("target_point")
@@ -187,11 +194,13 @@ class E2ETransfuserNode(Node):
             confidence = 1.0
             self.publish_outputs(path, steering, curvature, speed_target, confidence)
         elif input_ready:
+            # 実モデル runtime は未接続でも、準備状態を confidence と status で可視化する。
             confidence = 0.2 if self.runtime_summary["ready"] else 0.05
 
         self.publish_status(now, input_ready, missing, confidence)
 
     def run_mock_runtime(self, now):
+        # mock は target point へ直線 waypoint を引く。ROS契約確認用で、走行品質評価用ではない。
         target_x, target_y = self.default_target_x_m, self.default_target_y_m
         target_msg = self.samples["target_point"].msg
         if target_msg is not None:
@@ -218,6 +227,7 @@ class E2ETransfuserNode(Node):
         curvature = 2.0 * target_y / max(distance * distance, 0.1)
         steering = math.atan(self.wheel_base_m * curvature)
 
+        # 速度目標は最低値を持たせ、停止 bag でも topic がゼロ固定になりすぎないようにする。
         odom = self.samples["odom"].msg
         vx = float(odom.twist.twist.linear.x) if odom is not None else 0.0
         vy = float(odom.twist.twist.linear.y) if odom is not None else 0.0
@@ -251,6 +261,7 @@ class E2ETransfuserNode(Node):
         return marker_array
 
     def publish_status(self, now, input_ready, missing, confidence):
+        # GUI / replay tools から読めるよう、node状態とruntime診断をJSON文字列で流す。
         ages = {
             name: sample.age_sec(now)
             for name, sample in self.samples.items()

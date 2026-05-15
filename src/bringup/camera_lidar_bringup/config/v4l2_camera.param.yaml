@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    # Default profile for TIER IV Automotive HDR Camera C2.
+    # Edge.Auto examples use 2880x1860, 30 fps, UYVY for C2.
+    video_device: /dev/video0
+    pixel_format: UYVY
+    output_encoding: rgb8
+    image_size: [2880, 1860]
+    camera_frame_id: camera0
+    time_per_frame: [1, 30]

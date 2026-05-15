@@ -1,6 +1,6 @@
 # Ubuntu Local Setup
 
-`docker/Dockerfile` をもとに、Ubuntu ホスト上へできるだけ同じ開発環境を再現するためのセットアップです。ROS 2 Humble / librealsense / Livox-SDK2 / libtorch / CycloneDDS を揃え、必要に応じて CUDA と NVIDIA Container Toolkit も導入できます。
+`docker/Dockerfile` をもとに、Ubuntu ホスト上へできるだけ同じ開発環境を再現するためのセットアップです。ROS 2 Humble / librealsense / Livox-SDK2 / libtorch / acados / CycloneDDS を揃え、Helianthus 直下の Autoware ビルドで必要になる ROS / apt 依存も導入します。必要に応じて CUDA と NVIDIA Container Toolkit も導入できます。
 
 ## 対象
 
@@ -14,6 +14,9 @@
 - `setup/ubuntu_setup.sh`: 本体セットアップ
 - `setup/ubuntu_env.sh`: ROS / Torch / CycloneDDS の環境変数を読み込む
 - `setup/cyclonedds.xml`: CycloneDDS 設定
+
+Autoware 関連では Lanelet2、GridMap、`generate_parameter_library`、`tensorrt_cmake_module` など、Helianthus 直下ビルドで不足しやすい apt パッケージも `ubuntu_setup.sh` でまとめて入れます。
+`autoware_path_optimizer` が要求する `acados` は `/opt/acados` へソースビルドし、`ubuntu_env.sh` で `CMAKE_PREFIX_PATH` / `ACADOS_SOURCE_DIR` / `LD_LIBRARY_PATH` を設定します。
 
 ## 使い方
 
@@ -39,6 +42,8 @@ CUDA も含めてホスト実行用に揃える:
 ./setup/ubuntu_setup.sh --with-cuda --with-nvidia-smi --with-nvidia-driver --libtorch-variant cu121
 ```
 
+`--with-cuda` は Autoware に合わせて NVIDIA apt repository から CUDA 12.8 系の開発パッケージを導入します。別バージョンを使う場合は `CUDA_VERSION=12.8` を上書きしてください。
+
 NVIDIA driver カーネルモジュールのみをインストール (GPU を使うが nvidia-utils は不要な場合):
 
 ```bash
@@ -63,10 +68,10 @@ Docker の GPU パススルーも使えるようにする:
   --libtorch-variant cu121
 ```
 
-`uv` や `ibus` を入れたくない場合:
+`uv`、`ibus`、`acados` を入れたくない場合:
 
 ```bash
-./setup/ubuntu_setup.sh --skip-uv --skip-ibus-mozc
+./setup/ubuntu_setup.sh --skip-uv --skip-ibus-mozc --skip-acados
 ```
 
 ## セットアップ後
@@ -113,7 +118,7 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 ## 注意点
 
 - ROS 2 Humble の apt バイナリ前提なので、Ubuntu 22.04 以外では一部ステップが失敗する可能性があります。
-- `--with-cuda` は Ubuntu リポジトリの `nvidia-cuda-toolkit` を使います。ネイティブ CUDA 開発で厳密なバージョン固定が必要なら、必要に応じて NVIDIA 提供の CUDA パッケージへ置き換えてください。
+- `--with-cuda` は NVIDIA apt repository の CUDA パッケージを使います。Autoware の既定は CUDA 12.8 です。
 - `--with-nvidia-driver` はカーネルアップデート後に NVIDIA driver が動作しなくなった場合に便利です。現在のカーネルバージョン用のカーネルモジュールパッケージを自動検出・インストールします。
 - `--with-nvidia-container-toolkit` は Docker が必要です。未導入なら `--install-docker` を併用してください。
 - `libtorch` の GPU バリアントは `cu118` と `cu121` を選べます。ホスト側 CUDA / ドライバとの整合は利用環境に合わせてください。

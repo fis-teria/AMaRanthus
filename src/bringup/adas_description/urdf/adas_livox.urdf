@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="adas_sensor_tf">
+  <!-- ROS REP-103: x forward, y left, z up. Right 0.8 m means y = -0.8 m. -->
+  <link name="base_link"/>
+
+  <link name="livox_frame"/>
+
+  <joint name="base_link_to_livox_frame" type="fixed">
+    <parent link="base_link"/>
+    <child link="livox_frame"/>
+    <origin xyz="0.0 -0.8 0.8" rpy="0.0 0.0 0.0"/>
+  </joint>
+
+  <link name="camera0"/>
+
+  <joint name="base_link_to_camera0" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera0"/>
+    <!-- Impreza G4 windshield mount, about 10 cm left of the rear-view mirror. -->
+    <origin xyz="1.2 0.1 1.35" rpy="0.0 0.0 0.0"/>
+  </joint>
+</robot>

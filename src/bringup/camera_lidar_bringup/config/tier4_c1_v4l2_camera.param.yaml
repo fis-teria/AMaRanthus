@@ -1,0 +1,9 @@
+/**:
+  ros__parameters:
+    # TIER IV Automotive HDR Camera C1 profile.
+    video_device: /dev/video0
+    pixel_format: UYVY
+    output_encoding: rgb8
+    image_size: [1920, 1280]
+    camera_frame_id: camera0
+    time_per_frame: [1, 30]

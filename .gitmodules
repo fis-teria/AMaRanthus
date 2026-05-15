@@ -34,3 +34,10 @@
 [submodule "src/slam/fast_lio_ros2"]
 	path = src/slam/fast_lio_ros2
 	url = git@github.com:fis-teria/FAST_LIO_ROS2.git
+[submodule "src/drivers/ros2_v4l2_camera"]
+	path = src/drivers/ros2_v4l2_camera
+	url = https://github.com/fis-teria/ros2_v4l2_camera.git
+[submodule "src/img_proc/yolo_ros"]
+	path = src/img_proc/yolo_ros
+	url = https://github.com/mgonzs13/yolo_ros.git
+	branch = main

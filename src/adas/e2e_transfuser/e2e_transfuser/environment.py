@@ -8,6 +8,7 @@ MODEL_FILES = ("config.json", "args.txt", "README.md")
 
 
 def resolve_path(value, env_name=None):
+    # Launch 引数を優先し、空なら環境変数へ fallback する。
     candidate = value or (os.environ.get(env_name, "") if env_name else "")
     if not candidate:
         return None
@@ -28,9 +29,11 @@ def inspect_lead_environment(
     disable_aux_heads=True,
     single_checkpoint=True,
 ):
+    # ここでは実モデルを load せず、実行前に分かる条件だけを軽量に検査する。
     lead_root = resolve_path(lead_project_root, "LEAD_PROJECT_ROOT")
     model_dir = resolve_path(model_path)
 
+    # checkpoint directory の中身を見て、single checkpoint / ensemble の判断材料にする。
     pth_files = []
     model_files = {}
     if model_dir is not None and model_dir.exists():
@@ -42,6 +45,7 @@ def inspect_lead_environment(
         lead_package = lead_root / "lead"
 
     dependencies = {
+        # optional dependency として扱う。無い場合も診断 JSON を返して node は落とさない。
         "torch": module_available("torch"),
         "onnxruntime": module_available("onnxruntime"),
         "tensorrt": module_available("tensorrt"),
@@ -58,6 +62,7 @@ def inspect_lead_environment(
     }
 
     blocking = []
+    # runtime ごとに「今すぐ forward を試すと詰まる理由」を整理する。
     if runtime_mode == "lead_python":
         if not dependencies["torch"]:
             blocking.append("python module 'torch' is not importable")
@@ -69,6 +74,7 @@ def inspect_lead_environment(
         if not dependencies["onnxruntime"]:
             blocking.append("python module 'onnxruntime' is not importable")
     elif runtime_mode == "tensorrt":
+        # INT8 は calibration と経路差分評価が必須なので、明示許可なしでは止める。
         if precision_mode == "int8" and not allow_int8:
             blocking.append("INT8 requires explicit calibration data and allow_int8=true at runtime")
         if not dependencies["tensorrt"]:
