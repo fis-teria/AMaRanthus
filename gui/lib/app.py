@@ -31,6 +31,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--ros-camera-display-max-edge-px", type=int, default=1280)
     parser.add_argument("--ros-camera-info-topic", default="/sensing/camera/camera0/camera_info")
     parser.add_argument("--ros-pointcloud-topic", default="/livox/lidar")
+    parser.add_argument("--ros-pointcloud-max-points", type=int, default=5000)
+    parser.add_argument("--ros-pointcloud-min-update-interval-sec", type=float, default=0.12)
     parser.add_argument("--ros-scan-topic", default="/scan")
     parser.add_argument("--ros-lane-topic", default="/scan")
     parser.add_argument("--ros-objects-topic", default="/detected_objects")
@@ -94,6 +96,8 @@ def main() -> None:
         ros_camera_display_max_edge_px=args.ros_camera_display_max_edge_px,
         ros_camera_info_topic=args.ros_camera_info_topic,
         ros_pointcloud_topic=args.ros_pointcloud_topic,
+        ros_pointcloud_max_points=args.ros_pointcloud_max_points,
+        ros_pointcloud_min_update_interval_sec=args.ros_pointcloud_min_update_interval_sec,
         ros_scan_topic=args.ros_scan_topic,
         ros_lane_topic=args.ros_lane_topic,
         ros_objects_topic=args.ros_objects_topic,

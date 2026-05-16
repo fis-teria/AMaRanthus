@@ -125,6 +125,10 @@ def generate_launch_description():
             "camera_info_url": LaunchConfiguration("camera_info_url"),
             "use_sensor_data_qos": LaunchConfiguration("use_sensor_data_qos"),
             "camera_publish_rate": LaunchConfiguration("camera_publish_rate"),
+            "v4l2_video_device": LaunchConfiguration("v4l2_video_device"),
+            "use_v4l2_preflight": LaunchConfiguration("use_v4l2_preflight"),
+            "v4l2_expected_device_name": LaunchConfiguration("v4l2_expected_device_name"),
+            "v4l2_strict_device_check": LaunchConfiguration("v4l2_strict_device_check"),
             "camera_hardware_id": LaunchConfiguration("camera_hardware_id"),
             "yolo_model": LaunchConfiguration("yolo_model"),
             "yolo_device": LaunchConfiguration("yolo_device"),
@@ -165,6 +169,7 @@ def generate_launch_description():
             "objects_topic": LaunchConfiguration("lane_detection_objects_topic"),
             "model_path": LaunchConfiguration("lane_detection_model_path"),
             "output_frame": LaunchConfiguration("lane_detection_output_frame"),
+            "torch_lib_path": LaunchConfiguration("lane_detection_torch_lib_path"),
             "launch_livox_driver": "false",
         }.items(),
         condition=IfCondition(use_livox_lane_detection),
@@ -327,6 +332,14 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("lane_detection_output_frame", default_value=""),
+            DeclareLaunchArgument(
+                "lane_detection_torch_lib_path",
+                default_value="/opt/libtorch/lib",
+                description=(
+                    "libtorch runtime library directory for livox_lane_detection. "
+                    "Keep this ahead of Python wheel torch libs."
+                ),
+            ),
             DeclareLaunchArgument("pointcloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("odom_topic", default_value="/Odometry"),
             DeclareLaunchArgument("image_topic", default_value="/sensing/camera/camera0/image_rect_color"),
@@ -357,6 +370,21 @@ def generate_launch_description():
             DeclareLaunchArgument("camera_info_url", default_value=""),
             DeclareLaunchArgument("use_sensor_data_qos", default_value="true"),
             DeclareLaunchArgument("camera_publish_rate", default_value="-1.0"),
+            DeclareLaunchArgument(
+                "v4l2_video_device",
+                default_value="",
+                description=(
+                    "Optional stable V4L2 device path forwarded to camera_lidar_bringup. "
+                    "Prefer /dev/v4l/by-id or /dev/v4l/by-path over /dev/videoN."
+                ),
+            ),
+            DeclareLaunchArgument("use_v4l2_preflight", default_value="true"),
+            DeclareLaunchArgument(
+                "v4l2_expected_device_name",
+                default_value="TIER IV",
+                description="Warn when the selected camera does not look like the expected unit.",
+            ),
+            DeclareLaunchArgument("v4l2_strict_device_check", default_value="false"),
             DeclareLaunchArgument(
                 "camera_hardware_id",
                 default_value="tier4_automotive_hdr_camera_c2",

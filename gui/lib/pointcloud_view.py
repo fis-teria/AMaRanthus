@@ -194,16 +194,13 @@ class PointCloudView(QWidget):
     def draw_points(self, painter: QPainter) -> None:
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, False)
-        projected_points = []
         for point in self.points:
             projected = self._project(self._world_point(point))
             if projected is None:
                 continue
-            projected_points.append((projected[1], projected[0], point.z_m))
-
-        for depth, view_point, z_m in sorted(projected_points, reverse=True):
+            view_point, depth = projected
             size = max(2, min(5, int(120.0 / max(depth, 1.0))))
-            painter.setPen(QPen(self._height_color(z_m), size))
+            painter.setPen(QPen(self._height_color(point.z_m), size))
             painter.drawPoint(view_point)
         painter.restore()
 

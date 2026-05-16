@@ -50,6 +50,8 @@ ROS_CAMERA_OVERLAY_TIMEOUT_SEC="${ROS_CAMERA_OVERLAY_TIMEOUT_SEC:-1.0}"
 ROS_CAMERA_DISPLAY_MAX_EDGE_PX="${ROS_CAMERA_DISPLAY_MAX_EDGE_PX:-1280}"
 ROS_CAMERA_INFO_TOPIC="${ROS_CAMERA_INFO_TOPIC:-/sensing/camera/camera0/camera_info}"
 ROS_POINTCLOUD_TOPIC="${ROS_POINTCLOUD_TOPIC:-/livox/lidar}"
+ROS_POINTCLOUD_MAX_POINTS="${ROS_POINTCLOUD_MAX_POINTS:-5000}"
+ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC="${ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC:-0.12}"
 ROS_SCAN_TOPIC="${ROS_SCAN_TOPIC:-/scan}"
 ROS_LANE_TOPIC="${ROS_LANE_TOPIC:-/livox/lane_detection/scan}"
 ROS_OBJECTS_TOPIC="${ROS_OBJECTS_TOPIC:-/livox/lane_detection/objects}"
@@ -100,6 +102,8 @@ exec uv run main.py \
     --ros-camera-display-max-edge-px "${ROS_CAMERA_DISPLAY_MAX_EDGE_PX}" \
     --ros-camera-info-topic "${ROS_CAMERA_INFO_TOPIC}" \
     --ros-pointcloud-topic "${ROS_POINTCLOUD_TOPIC}" \
+    --ros-pointcloud-max-points "${ROS_POINTCLOUD_MAX_POINTS}" \
+    --ros-pointcloud-min-update-interval-sec "${ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC}" \
     --ros-scan-topic "${ROS_SCAN_TOPIC}" \
     --ros-lane-topic "${ROS_LANE_TOPIC}" \
     --ros-objects-topic "${ROS_OBJECTS_TOPIC}" \

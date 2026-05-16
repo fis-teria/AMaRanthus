@@ -211,6 +211,8 @@ class Ros2DataSource(QObject):
         camera_display_max_edge_px: int,
         camera_info_topic: str,
         pointcloud_topic: str,
+        pointcloud_max_points: int,
+        pointcloud_min_update_interval_sec: float,
         scan_topic: str,
         lane_topic: str,
         objects_topic: str,
@@ -238,6 +240,10 @@ class Ros2DataSource(QObject):
         self._camera_display_max_edge_px = max(0, int(camera_display_max_edge_px))
         self._camera_info_topic = camera_info_topic
         self._pointcloud_topic = pointcloud_topic
+        self._pointcloud_max_points = max(100, int(pointcloud_max_points))
+        self._pointcloud_min_update_interval_sec = max(
+            0.0, float(pointcloud_min_update_interval_sec)
+        )
         self._scan_topic = scan_topic
         self._lane_topic = lane_topic
         self._objects_topic = objects_topic
@@ -265,6 +271,7 @@ class Ros2DataSource(QObject):
         self._live_fields: set[str] = set()
         self._pointcloud_messages = 0
         self._pointcloud_parse_errors = 0
+        self._last_pointcloud_update_at = 0.0
         self._camera_messages = 0
         self._camera_parse_errors = 0
         self._camera_overlay_messages = 0
@@ -327,6 +334,12 @@ class Ros2DataSource(QObject):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
+        pointcloud_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         node.create_subscription(
             Image,
             self._camera_image_topic,
@@ -349,7 +362,7 @@ class Ros2DataSource(QObject):
             PointCloud2,
             self._pointcloud_topic,
             self._on_pointcloud,
-            best_effort_qos,
+            pointcloud_qos,
         )
         node.create_subscription(LaserScan, self._scan_topic, self._on_scan, 10)
         node.create_subscription(LaserScan, self._lane_topic, self._on_lane, 10)
@@ -520,9 +533,19 @@ class Ros2DataSource(QObject):
     def _on_pointcloud(self, msg) -> None:
         self._mark_live_data("pointcloud")
         self._pointcloud_messages += 1
+
+        now = time.monotonic()
+        if (
+            self._pointcloud_messages > 1
+            and now - self._last_pointcloud_update_at
+            < self._pointcloud_min_update_interval_sec
+        ):
+            return
+
         points = []
-        max_points = 12000
-        stride = max(1, int(getattr(msg, "width", 0) * getattr(msg, "height", 1) / max_points))
+        max_points = self._pointcloud_max_points
+        total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
+        stride = max(1, math.ceil(total_points / max_points))
         if self._pointcloud_messages == 1:
             fields = ", ".join(getattr(field, "name", "?") for field in getattr(msg, "fields", []))
             self._log(
@@ -565,10 +588,14 @@ class Ros2DataSource(QObject):
             points = []
 
         self._pointcloud_points = points
+        self._last_pointcloud_update_at = now
         if self._pointcloud_messages == 1 or self._pointcloud_messages % 100 == 0:
             self._log(
                 "INFO",
-                f"PointCloud2 parsed frame {self._pointcloud_messages}: kept {len(points)} points, stride={stride}",
+                (
+                    f"PointCloud2 parsed frame {self._pointcloud_messages}: "
+                    f"kept {len(points)} points, stride={stride}, max_points={max_points}"
+                ),
             )
         self._emit_state()
 

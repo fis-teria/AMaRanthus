@@ -10,7 +10,11 @@
 
 `shadow_mode_e2e_transfuser.launch.py` はデフォルトで Livox lane detection も起動します。Livox driver は `camera_lidar_bringup` 側で起動するため、E2E から呼び出す `livox_lane_detection_live.launch.py` では `launch_livox_driver:=false` に固定しています。lane detection だけ止めたい場合は `use_livox_lane_detection:=false` を指定してください。`use_adas_bringup:=true` でフル ADAS bringup 側から lane detection を起動する場合も、二重起動を避けるため `use_livox_lane_detection:=false` を併用してください。
 
+`livox_lane_detection` は C++ TorchScript node なので、ビルドと実行は `/opt/libtorch` を使います。Python wheel の `Data/venvs/yolo_ros_cuda/.../torch/lib` と混ぜると `libc10_cuda.so` の symbol lookup error が出るため、E2E launch は `lane_detection_torch_lib_path:=/opt/libtorch/lib` を既定で lane detection node の `LD_LIBRARY_PATH` 先頭に入れます。
+
 `shadow_mode_e2e_transfuser.launch.py` はデフォルトで ADAS description と FAST-LIO も単独起動します。description は `use_adas_description:=true` で `adas_robot_state_publisher` を起動し、`adas_livox.urdf` から `base_link` / `livox_frame` / `camera0` の TF を publish します。FAST-LIO は `use_fast_lio:=true` で `fast_lio` の `mapping.launch.py` を起動し、既定では `/Odometry` を E2E と shadow ego estimation の共通 odometry 入力にします。`shadow_virtual_control` は `virtual_input_mode:=pointcloud` のまま `/livox/lidar` を使います。
+
+V4L2 カメラは既定で Tier IV C2 profile を使います。USB 差し替えで `/dev/video0` が別カメラになる場合は、`v4l2_video_device:=/dev/v4l/by-id/...` または `/dev/v4l/by-path/...` を指定してください。`use_v4l2_preflight:=true` では `v4l2-ctl --info` を起動前に確認し、`v4l2_expected_device_name:=TIER IV` と合わない場合は警告します。誤デバイスで続行したくない場合は `v4l2_strict_device_check:=true` を併用してください。
 
 `shadow_mode_e2e_transfuser.launch.py` の E2E runtime は既定で `lead_python` です。`Data/src/lead` と `Data/models/tfv6/tfv6_resnet34` がある場合、`Data/venvs/yolo_ros_cuda` の CUDA 対応 PyTorch を使って `runtime_device:=cuda:0` で LEAD / TFv6 をロードします。推論時は `disable_aux_heads:=true` を既定にして、semantic / depth / BEV semantic / bbox / radar detection など学習時の補助ヘッドは構築しません。旧mock経路に戻す場合は `e2e_runtime_mode:=mock` を指定してください。
 
