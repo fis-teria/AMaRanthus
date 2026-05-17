@@ -9,6 +9,8 @@ e2e_path_overlay:
     yolo_detections_topic: /yolo/tracking
     output_image_topic: /shadow/e2e/overlay_image
     output_status_topic: /shadow/e2e/overlay_status
+    output_max_edge_px: 640
+    publish_status_every_frame: true
     use_tf_translation: true
     camera_x_m: 1.2
     camera_y_m: 0.1

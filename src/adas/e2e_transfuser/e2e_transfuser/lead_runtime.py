@@ -59,6 +59,7 @@ class LeadTorchRuntime:
         python_site: str = "",
         torch_lib: str = "",
         force_timm_pretrained_off: bool = True,
+        input_preprocess_backend: str = "cpu",
     ):
         self.lead_project_root = lead_project_root
         self.model_path = model_path
@@ -70,6 +71,7 @@ class LeadTorchRuntime:
         self.python_site = python_site
         self.torch_lib = torch_lib
         self.force_timm_pretrained_off = force_timm_pretrained_off
+        self.input_preprocess_backend = str(input_preprocess_backend).lower()
         self.loaded = False
         self.error = ""
         self.nets = []
@@ -81,6 +83,7 @@ class LeadTorchRuntime:
         self.checkpoint_files: list[str] = []
         self.forward_count = 0
         self.last_latency_ms = None
+        self.last_preprocess_latency_ms = None
         self.last_error = ""
 
     def load(self, *, extra_roots: list[Path] | None = None) -> bool:
@@ -302,13 +305,27 @@ class LeadTorchRuntime:
         target_xy: tuple[float, float] = (15.0, 0.0),
         command: str = "lane_follow",
     ) -> dict[str, Any]:
+        start = time.perf_counter()
+        if self.input_preprocess_backend == "torch_cuda" and self.device.type == "cuda":
+            data = self._build_data_from_ros_torch_cuda(
+                image_msg=image_msg,
+                speed_mps=speed_mps,
+                target_xy=target_xy,
+                command=command,
+            )
+            self.torch.cuda.synchronize(self.device)
+            self.last_preprocess_latency_ms = (time.perf_counter() - start) * 1000.0
+            return data
+
         image = self._image_msg_to_rgb_array(image_msg)
-        return self.build_data_from_arrays(
+        data = self.build_data_from_arrays(
             image_rgb=image,
             speed_mps=speed_mps,
             target_xy=target_xy,
             command=command,
         )
+        self.last_preprocess_latency_ms = (time.perf_counter() - start) * 1000.0
+        return data
 
     def build_synthetic_data(self) -> dict[str, Any]:
         image = self.np.zeros(
@@ -348,6 +365,36 @@ class LeadTorchRuntime:
             "target_point_previous": torch.from_numpy(target),
             "target_point_next": torch.from_numpy(target),
             "iteration": torch.tensor([0], dtype=torch.long),
+        }
+
+    def _build_data_from_ros_torch_cuda(
+        self,
+        *,
+        image_msg,
+        speed_mps: float = 0.0,
+        target_xy: tuple[float, float] = (15.0, 0.0),
+        command: str = "lane_follow",
+    ) -> dict[str, Any]:
+        torch = self.torch
+        image = self._image_msg_to_torch_rgb_tensor(image_msg)
+
+        lidar_h = int(self.config.lidar_height_pixel)
+        lidar_w = int(self.config.lidar_width_pixel)
+        command_one_hot = torch.zeros((1, 6), dtype=torch.float32, device=self.device)
+        command_one_hot[0, self._command_index(command)] = 1.0
+        target = torch.tensor([target_xy], dtype=torch.float32, device=self.device)
+
+        return {
+            "rgb": image,
+            "rasterized_lidar": torch.zeros(
+                (1, 1, lidar_h, lidar_w), dtype=torch.float32, device=self.device
+            ),
+            "speed": torch.tensor([float(speed_mps)], dtype=torch.float32, device=self.device),
+            "command": command_one_hot,
+            "target_point": target,
+            "target_point_previous": target,
+            "target_point_next": target,
+            "iteration": torch.tensor([0], dtype=torch.long, device=self.device),
         }
 
     def forward(self, data: dict[str, Any]) -> LeadForwardResult:
@@ -427,16 +474,20 @@ class LeadTorchRuntime:
 
     def _command_one_hot(self, command: str):
         one_hot = self.np.zeros((1, 6), dtype=self.np.float32)
+        one_hot[0, self._command_index(command)] = 1.0
+        return one_hot
+
+    def _command_index(self, command: str) -> int:
         lookup = {
             "left": 0,
             "right": 1,
             "straight": 2,
             "lane_follow": 3,
+            "lanefollow": 3,
             "change_lane_left": 4,
             "change_lane_right": 5,
         }
-        one_hot[0, lookup.get(str(command), 3)] = 1.0
-        return one_hot
+        return lookup.get(str(command), 3)
 
     def _image_msg_to_rgb_array(self, msg):
         np = self.np
@@ -458,7 +509,87 @@ class LeadTorchRuntime:
         if encoding == "bgra8":
             bgra = raw.reshape(height, step)[:, : width * 4].reshape(height, width, 4)
             return cv2.cvtColor(bgra, cv2.COLOR_BGRA2RGB)
+        if encoding in {"yuv422", "uyvy"}:
+            uyvy = raw.reshape(height, step)[:, : width * 2].reshape(height, width, 2)
+            return cv2.cvtColor(uyvy, cv2.COLOR_YUV2RGB_UYVY)
+        if encoding in {"yuv422_yuy2", "yuyv", "yuy2"}:
+            yuyv = raw.reshape(height, step)[:, : width * 2].reshape(height, width, 2)
+            return cv2.cvtColor(yuyv, cv2.COLOR_YUV2RGB_YUY2)
         if encoding in {"mono8", "8uc1"}:
             gray = raw.reshape(height, step)[:, :width].reshape(height, width)
             return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
         raise ValueError(f"Unsupported image encoding for LEAD runtime: {msg.encoding}")
+
+    def _image_msg_to_torch_rgb_tensor(self, msg):
+        torch = self.torch
+        width = int(msg.width)
+        height = int(msg.height)
+        step = int(msg.step)
+        encoding = str(msg.encoding).lower()
+        raw = torch.frombuffer(memoryview(msg.data), dtype=torch.uint8)
+
+        if encoding in {"rgb8", "bgr8"}:
+            packed = raw.reshape(height, step)[:, : width * 3]
+            image = packed.reshape(height, width, 3).to(self.device, non_blocking=True)
+            if encoding == "bgr8":
+                image = image[..., [2, 1, 0]]
+            return self._resize_torch_rgb_hwc(image)
+
+        if encoding in {"rgba8", "bgra8"}:
+            packed = raw.reshape(height, step)[:, : width * 4]
+            image = packed.reshape(height, width, 4).to(self.device, non_blocking=True)
+            if encoding == "rgba8":
+                image = image[..., :3]
+            else:
+                image = image[..., [2, 1, 0]]
+            return self._resize_torch_rgb_hwc(image)
+
+        if encoding in {"yuv422", "uyvy", "yuv422_yuy2", "yuyv", "yuy2"}:
+            packed = raw.reshape(height, step)[:, : width * 2].contiguous()
+            image = packed.reshape(height, width, 2).to(self.device, non_blocking=True)
+            if encoding in {"yuv422", "uyvy"}:
+                return self._resize_torch_rgb_hwc(self._uyvy_to_rgb_torch(image))
+            return self._resize_torch_rgb_hwc(self._yuyv_to_rgb_torch(image))
+
+        if encoding in {"mono8", "8uc1"}:
+            packed = raw.reshape(height, step)[:, :width]
+            gray = packed.reshape(height, width).to(self.device, non_blocking=True)
+            image = gray[..., None].expand(height, width, 3)
+            return self._resize_torch_rgb_hwc(image)
+
+        raise ValueError(f"Unsupported image encoding for LEAD runtime: {msg.encoding}")
+
+    def _uyvy_to_rgb_torch(self, image):
+        y = image[..., 1].float()
+        u = image[:, 0::2, 0].repeat_interleave(2, dim=1)[:, : image.shape[1]].float()
+        v = image[:, 1::2, 0].repeat_interleave(2, dim=1)[:, : image.shape[1]].float()
+        return self._yuv_to_rgb_torch(y, u, v)
+
+    def _yuyv_to_rgb_torch(self, image):
+        y = image[..., 0].float()
+        u = image[:, 0::2, 1].repeat_interleave(2, dim=1)[:, : image.shape[1]].float()
+        v = image[:, 1::2, 1].repeat_interleave(2, dim=1)[:, : image.shape[1]].float()
+        return self._yuv_to_rgb_torch(y, u, v)
+
+    def _yuv_to_rgb_torch(self, y, u, v):
+        y = (y - 16.0).clamp_(min=0.0)
+        u = u - 128.0
+        v = v - 128.0
+        r = 1.164383 * y + 1.596027 * v
+        g = 1.164383 * y - 0.391762 * u - 0.812968 * v
+        b = 1.164383 * y + 2.017232 * u
+        return self.torch.stack((r, g, b), dim=2).clamp_(0.0, 255.0)
+
+    def _resize_torch_rgb_hwc(self, image):
+        image_h = int(self.config.final_image_height)
+        image_w = int(self.config.final_image_width)
+        tensor = image.permute(2, 0, 1).unsqueeze(0).float()
+        if image.shape[0] == image_h and image.shape[1] == image_w:
+            return tensor.contiguous()
+        return self.torch.nn.functional.interpolate(
+            tensor,
+            size=(image_h, image_w),
+            mode="bilinear",
+            align_corners=False,
+            antialias=True,
+        ).contiguous()

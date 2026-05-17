@@ -125,6 +125,8 @@ def generate_launch_description():
             "camera_info_url": LaunchConfiguration("camera_info_url"),
             "use_sensor_data_qos": LaunchConfiguration("use_sensor_data_qos"),
             "camera_publish_rate": LaunchConfiguration("camera_publish_rate"),
+            "camera_output_encoding": LaunchConfiguration("camera_output_encoding"),
+            "use_v4l2_buffer_timestamps": LaunchConfiguration("use_v4l2_buffer_timestamps"),
             "v4l2_video_device": LaunchConfiguration("v4l2_video_device"),
             "use_v4l2_preflight": LaunchConfiguration("use_v4l2_preflight"),
             "v4l2_expected_device_name": LaunchConfiguration("v4l2_expected_device_name"),
@@ -203,6 +205,7 @@ def generate_launch_description():
                 "lead_python_site": LaunchConfiguration("lead_python_site"),
                 "lead_torch_lib": LaunchConfiguration("lead_torch_lib"),
                 "runtime_device": LaunchConfiguration("e2e_runtime_device"),
+                "input_preprocess_backend": LaunchConfiguration("e2e_input_preprocess_backend"),
                 "lead_strict_weight_load": ParameterValue(
                     LaunchConfiguration("lead_strict_weight_load"), value_type=bool
                 ),
@@ -211,6 +214,15 @@ def generate_launch_description():
                 ),
                 "lead_force_timm_pretrained_off": ParameterValue(
                     LaunchConfiguration("lead_force_timm_pretrained_off"), value_type=bool
+                ),
+                "disable_aux_heads": ParameterValue(
+                    LaunchConfiguration("disable_aux_heads"), value_type=bool
+                ),
+                "single_checkpoint": ParameterValue(
+                    LaunchConfiguration("single_checkpoint"), value_type=bool
+                ),
+                "allow_int8": ParameterValue(
+                    LaunchConfiguration("allow_int8"), value_type=bool
                 ),
                 "image_topic": LaunchConfiguration("image_topic"),
                 "camera_info_topic": LaunchConfiguration("camera_info_topic"),
@@ -272,6 +284,7 @@ def generate_launch_description():
             "yolo_detections_topic": LaunchConfiguration("yolo_detections_topic"),
             "output_image_topic": LaunchConfiguration("e2e_overlay_image_topic"),
             "use_tf_translation": LaunchConfiguration("e2e_overlay_use_tf_translation"),
+            "output_max_edge_px": LaunchConfiguration("e2e_overlay_output_max_edge_px"),
         }.items(),
         condition=IfCondition(use_e2e_path_overlay),
     )
@@ -369,7 +382,13 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("camera_info_url", default_value=""),
             DeclareLaunchArgument("use_sensor_data_qos", default_value="true"),
-            DeclareLaunchArgument("camera_publish_rate", default_value="-1.0"),
+            DeclareLaunchArgument("camera_publish_rate", default_value="10.0"),
+            DeclareLaunchArgument(
+                "camera_output_encoding",
+                default_value="rgb8",
+                description="V4L2 camera output encoding; use yuv422 to pass UYVY through.",
+            ),
+            DeclareLaunchArgument("use_v4l2_buffer_timestamps", default_value="false"),
             DeclareLaunchArgument(
                 "v4l2_video_device",
                 default_value="",
@@ -381,7 +400,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_v4l2_preflight", default_value="true"),
             DeclareLaunchArgument(
                 "v4l2_expected_device_name",
-                default_value="TIER IV",
+                default_value="TIER IV,GMSL2-USB3.0 Conversion Kit",
                 description="Warn when the selected camera does not look like the expected unit.",
             ),
             DeclareLaunchArgument("v4l2_strict_device_check", default_value="false"),
@@ -422,6 +441,7 @@ def generate_launch_description():
                 default_value="/shadow/e2e/overlay_image",
             ),
             DeclareLaunchArgument("e2e_overlay_use_tf_translation", default_value="true"),
+            DeclareLaunchArgument("e2e_overlay_output_max_edge_px", default_value="640"),
             DeclareLaunchArgument("require_target_point", default_value="true"),
             DeclareLaunchArgument("record_shadow_bag", default_value="false"),
             DeclareLaunchArgument(
@@ -450,6 +470,7 @@ def generate_launch_description():
             DeclareLaunchArgument("e2e_runtime_mode", default_value="lead_python"),
             DeclareLaunchArgument("e2e_precision_mode", default_value="fp32"),
             DeclareLaunchArgument("e2e_runtime_device", default_value="cuda:0"),
+            DeclareLaunchArgument("e2e_input_preprocess_backend", default_value="cpu"),
             DeclareLaunchArgument("e2e_model_variant", default_value="tfv6_resnet34"),
             DeclareLaunchArgument("e2e_sensor_input_mode", default_value="auto"),
             DeclareLaunchArgument("e2e_camera_only_confidence_scale", default_value="0.75"),
@@ -463,6 +484,9 @@ def generate_launch_description():
             DeclareLaunchArgument("lead_strict_weight_load", default_value="false"),
             DeclareLaunchArgument("lead_probe_on_startup", default_value="true"),
             DeclareLaunchArgument("lead_force_timm_pretrained_off", default_value="true"),
+            DeclareLaunchArgument("disable_aux_heads", default_value="true"),
+            DeclareLaunchArgument("single_checkpoint", default_value="true"),
+            DeclareLaunchArgument("allow_int8", default_value="false"),
             DeclareLaunchArgument("e2e_publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("e2e_metrics_publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("input_timeout_sec", default_value="0.5"),

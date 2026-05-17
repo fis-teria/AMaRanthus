@@ -14,9 +14,13 @@
 
 `shadow_mode_e2e_transfuser.launch.py` はデフォルトで ADAS description と FAST-LIO も単独起動します。description は `use_adas_description:=true` で `adas_robot_state_publisher` を起動し、`adas_livox.urdf` から `base_link` / `livox_frame` / `camera0` の TF を publish します。FAST-LIO は `use_fast_lio:=true` で `fast_lio` の `mapping.launch.py` を起動し、既定では `/Odometry` を E2E と shadow ego estimation の共通 odometry 入力にします。`shadow_virtual_control` は `virtual_input_mode:=pointcloud` のまま `/livox/lidar` を使います。
 
-V4L2 カメラは既定で Tier IV C2 profile を使います。USB 差し替えで `/dev/video0` が別カメラになる場合は、`v4l2_video_device:=/dev/v4l/by-id/...` または `/dev/v4l/by-path/...` を指定してください。`use_v4l2_preflight:=true` では `v4l2-ctl --info` を起動前に確認し、`v4l2_expected_device_name:=TIER IV` と合わない場合は警告します。誤デバイスで続行したくない場合は `v4l2_strict_device_check:=true` を併用してください。
+V4L2 カメラは既定で Tier IV C2 profile を使います。USB 差し替えで `/dev/video0` が別カメラになる場合は、`use_v4l2_preflight:=true` により `TIER IV` または `GMSL2-USB3.0 Conversion Kit` に合う Video Capture デバイスを自動選択します。明示固定したい場合は `v4l2_video_device:=/dev/v4l/by-id/...` または `/dev/v4l/by-path/...` を指定してください。誤デバイスで続行したくない場合は `v4l2_strict_device_check:=true` を併用してください。
+
+10Hz の GUI 表示を優先する場合は `camera_output_encoding:=yuv422` を指定できます。GMSL2 カメラの `UYVY` を ROS へそのまま `yuv422` として流し、E2E runtime / overlay / GUI 側で必要なときだけ RGB へ変換します。`E2E_LIGHTWEIGHT_PRESET=fp16_minimal` は `camera_output_encoding:=yuv422` と `use_yolo:=false` を自動で設定します。
 
 `shadow_mode_e2e_transfuser.launch.py` の E2E runtime は既定で `lead_python` です。`Data/src/lead` と `Data/models/tfv6/tfv6_resnet34` がある場合、`Data/venvs/yolo_ros_cuda` の CUDA 対応 PyTorch を使って `runtime_device:=cuda:0` で LEAD / TFv6 をロードします。推論時は `disable_aux_heads:=true` を既定にして、semantic / depth / BEV semantic / bbox / radar detection など学習時の補助ヘッドは構築しません。旧mock経路に戻す場合は `e2e_runtime_mode:=mock` を指定してください。
+
+入力画像の `UYVY/yuv422 -> RGB -> resize` は既定では OpenCV CPU path です。GPU 側で前処理も試す場合は `e2e_input_preprocess_backend:=torch_cuda`、単体 launch では `input_preprocess_backend:=torch_cuda` を指定してください。`/shadow/e2e/status` には `lead_preprocess_latency_ms` と `input_preprocess_backend` が出ます。
 
 ## Phase 1: LEAD 環境診断
 
@@ -63,3 +67,15 @@ ros2 run e2e_transfuser e2e_transfuser_benchmark.py \
 ```
 
 INT8 は calibration data と経路差分評価が必要なため、`--allow-int8` を明示した場合だけ検討対象にします。
+
+E2E 入力前処理だけを比較する場合:
+
+```bash
+ros2 run e2e_transfuser e2e_preprocess_benchmark.py \
+  --lead-project-root Data/src/lead \
+  --python-site Data/venvs/yolo_ros_cuda/lib/python3.10/site-packages \
+  --torch-lib Data/venvs/yolo_ros_cuda/lib/python3.10/site-packages/torch/lib \
+  --device cuda:0 \
+  --precision-mode fp16 \
+  --forward
+```

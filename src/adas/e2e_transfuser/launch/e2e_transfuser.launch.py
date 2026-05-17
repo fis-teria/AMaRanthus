@@ -26,6 +26,7 @@ def generate_launch_description():
             DeclareLaunchArgument("lead_python_site", default_value=""),
             DeclareLaunchArgument("lead_torch_lib", default_value=""),
             DeclareLaunchArgument("runtime_device", default_value="cuda:0"),
+            DeclareLaunchArgument("input_preprocess_backend", default_value="cpu"),
             DeclareLaunchArgument("lead_strict_weight_load", default_value="false"),
             DeclareLaunchArgument("lead_probe_on_startup", default_value="true"),
             DeclareLaunchArgument("lead_force_timm_pretrained_off", default_value="true"),
@@ -81,6 +82,9 @@ def generate_launch_description():
                         "lead_python_site": LaunchConfiguration("lead_python_site"),
                         "lead_torch_lib": LaunchConfiguration("lead_torch_lib"),
                         "runtime_device": LaunchConfiguration("runtime_device"),
+                        "input_preprocess_backend": LaunchConfiguration(
+                            "input_preprocess_backend"
+                        ),
                         "lead_strict_weight_load": ParameterValue(
                             LaunchConfiguration("lead_strict_weight_load"), value_type=bool
                         ),

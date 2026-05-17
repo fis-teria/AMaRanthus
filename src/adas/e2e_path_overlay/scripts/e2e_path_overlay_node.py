@@ -32,6 +32,14 @@ SUPPORTED_ENCODINGS = {
     "mono8": ("mono", 1),
 }
 
+YUV422_ENCODINGS = {
+    "yuv422": "uyvy",
+    "uyvy": "uyvy",
+    "yuv422_yuy2": "yuyv",
+    "yuyv": "yuyv",
+    "yuy2": "yuyv",
+}
+
 
 def stamp_to_sec(stamp):
     return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
@@ -222,6 +230,25 @@ class E2EPathOverlayNode(Node):
     def image_callback(self, msg):
         now = self.get_clock().now()
         encoding = msg.encoding.lower()
+        if encoding in YUV422_ENCODINGS:
+            converted = self.yuv422_to_rgb8_image(msg, YUV422_ENCODINGS[encoding])
+            if converted is None:
+                self.publish_status(
+                    now,
+                    msg,
+                    projected_count=0,
+                    drawn_segments=0,
+                    skipped_reason=f"unsupported_encoding:{msg.encoding}",
+                )
+                if self.last_unsupported_encoding != msg.encoding:
+                    self.get_logger().warn(
+                        f"Unsupported image encoding '{msg.encoding}'. "
+                        "YUV422 input requires cv2 and numpy."
+                    )
+                    self.last_unsupported_encoding = msg.encoding
+                return
+            msg = converted
+            encoding = msg.encoding.lower()
         if encoding not in SUPPORTED_ENCODINGS:
             self.publish_status(
                 now,
@@ -290,6 +317,30 @@ class E2EPathOverlayNode(Node):
             skipped_reason="",
             camera_translation=camera_translation,
         )
+
+    def yuv422_to_rgb8_image(self, image, layout):
+        if cv2 is None or np is None:
+            return None
+        width = int(image.width)
+        height = int(image.height)
+        step = int(image.step)
+        try:
+            raw = np.frombuffer(image.data, dtype=np.uint8).reshape((height, step))
+            yuv = raw[:, : width * 2].reshape((height, width, 2))
+            code = cv2.COLOR_YUV2RGB_UYVY if layout == "uyvy" else cv2.COLOR_YUV2RGB_YUY2
+            rgb = cv2.cvtColor(yuv, code)
+        except ValueError:
+            return None
+
+        converted = Image()
+        converted.header = image.header
+        converted.height = image.height
+        converted.width = image.width
+        converted.encoding = "rgb8"
+        converted.is_bigendian = 0
+        converted.step = width * 3
+        converted.data = rgb.tobytes()
+        return converted
 
     def is_fresh(self, received_at, now, timeout_sec):
         if received_at is None:

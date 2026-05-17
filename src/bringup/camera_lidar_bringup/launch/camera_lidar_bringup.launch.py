@@ -1,4 +1,5 @@
 import os
+import glob
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,75 @@ def _card_type(v4l2_info: str) -> str:
     return ""
 
 
+def _expected_name_tokens(expected_name: str) -> list[str]:
+    return [
+        token.strip()
+        for part in expected_name.split("|")
+        for token in part.split(",")
+        if token.strip()
+    ]
+
+
+def _matches_expected_name(v4l2_info: str, expected_name: str) -> bool:
+    tokens = _expected_name_tokens(expected_name)
+    if not tokens:
+        return True
+    folded_info = v4l2_info.casefold()
+    return any(token.casefold() in folded_info for token in tokens)
+
+
+def _has_video_capture_device_cap(v4l2_info: str) -> bool:
+    in_device_caps = False
+    for line in v4l2_info.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Device Caps"):
+            in_device_caps = True
+            continue
+        if in_device_caps:
+            if not line.startswith("\t\t"):
+                break
+            if stripped == "Video Capture":
+                return True
+    return "Video Capture" in v4l2_info and "Device Caps" not in v4l2_info
+
+
+def _video_device_sort_key(path: str):
+    name = os.path.basename(path)
+    if name.startswith("video") and name[5:].isdigit():
+        return (1, int(name[5:]), path)
+    return (0, 0, path)
+
+
+def _candidate_video_devices() -> list[str]:
+    candidates = []
+    candidates.extend(sorted(glob.glob("/dev/v4l/by-id/*video-index0")))
+    candidates.extend(sorted(glob.glob("/dev/v4l/by-path/*video-index0")))
+    candidates.extend(sorted(glob.glob("/dev/video*"), key=_video_device_sort_key))
+
+    unique = []
+    seen_real_paths = set()
+    for path in candidates:
+        real_path = os.path.realpath(path)
+        if real_path in seen_real_paths:
+            continue
+        seen_real_paths.add(real_path)
+        unique.append(path)
+    return unique
+
+
+def _find_matching_video_device(expected_name: str) -> tuple[str, str, str]:
+    for candidate in _candidate_video_devices():
+        info, error = _device_info(candidate)
+        if error:
+            continue
+        if not _has_video_capture_device_cap(info):
+            continue
+        if not _matches_expected_name(info, expected_name):
+            continue
+        return candidate, _card_type(info), info
+    return "", "", ""
+
+
 def _build_v4l2_camera_launch(context, v4l2_share):
     param_path = LaunchConfiguration("v4l2_camera_param_path").perform(context)
     params = _load_v4l2_params(param_path)
@@ -68,8 +138,31 @@ def _build_v4l2_camera_launch(context, v4l2_share):
 
     configured_device = str(ros_params.get("video_device", "/dev/video0"))
     override_device = LaunchConfiguration("v4l2_video_device").perform(context).strip()
+    expected_name = LaunchConfiguration("v4l2_expected_device_name").perform(context).strip()
     video_device = override_device or configured_device
     ros_params["video_device"] = video_device
+    output_encoding = LaunchConfiguration("camera_output_encoding").perform(context).strip()
+    if output_encoding:
+        ros_params["output_encoding"] = output_encoding
+
+    actions = []
+    if not override_device and expected_name:
+        info = ""
+        if os.path.exists(video_device):
+            info, _ = _device_info(video_device)
+        if not info or not _has_video_capture_device_cap(info) or not _matches_expected_name(info, expected_name):
+            discovered_device, discovered_card, _ = _find_matching_video_device(expected_name)
+            if discovered_device:
+                video_device = discovered_device
+                ros_params["video_device"] = video_device
+                actions.append(
+                    LogInfo(
+                        msg=(
+                            "v4l2 camera auto-selected video_device="
+                            f"{video_device} detected card='{discovered_card}'"
+                        )
+                    )
+                )
 
     merged_param = tempfile.NamedTemporaryFile(
         mode="w",
@@ -80,17 +173,16 @@ def _build_v4l2_camera_launch(context, v4l2_share):
     with merged_param:
         yaml.safe_dump(params, merged_param, sort_keys=False)
 
-    actions = [
+    actions.append(
         LogInfo(
             msg=(
                 "v4l2 camera using video_device="
                 f"{video_device} param_file={merged_param.name}"
             )
         )
-    ]
+    )
 
     if _as_bool(LaunchConfiguration("use_v4l2_preflight").perform(context)):
-        expected_name = LaunchConfiguration("v4l2_expected_device_name").perform(context).strip()
         strict_check = _as_bool(LaunchConfiguration("v4l2_strict_device_check").perform(context))
         warnings = []
 
@@ -104,12 +196,14 @@ def _build_v4l2_camera_launch(context, v4l2_share):
             card = _card_type(info)
             if card:
                 actions.append(LogInfo(msg=f"v4l2 camera detected card='{card}'"))
-            if expected_name and expected_name.casefold() not in info.casefold():
+            if expected_name and not _matches_expected_name(info, expected_name):
                 actual = card or "unknown"
                 warnings.append(
-                    "expected device name containing "
+                    "expected device name containing one of "
                     f"'{expected_name}', but {video_device} reports '{actual}'."
                 )
+            if info and not _has_video_capture_device_cap(info):
+                warnings.append(f"{video_device} is not a Video Capture device.")
 
         for warning in warnings:
             actions.append(LogInfo(msg=f"[WARN] v4l2 camera preflight: {warning}"))
@@ -369,8 +463,13 @@ def generate_launch_description():
             DeclareLaunchArgument("camera_info_url", default_value=""),
             DeclareLaunchArgument("use_intra_process", default_value="false"),
             DeclareLaunchArgument("use_sensor_data_qos", default_value="true"),
-            DeclareLaunchArgument("camera_publish_rate", default_value="-1.0"),
-            DeclareLaunchArgument("use_v4l2_buffer_timestamps", default_value="true"),
+            DeclareLaunchArgument("camera_publish_rate", default_value="10.0"),
+            DeclareLaunchArgument(
+                "camera_output_encoding",
+                default_value="rgb8",
+                description="V4L2 camera output encoding; use yuv422 to pass UYVY through.",
+            ),
+            DeclareLaunchArgument("use_v4l2_buffer_timestamps", default_value="false"),
             DeclareLaunchArgument("use_image_transport", default_value="true"),
             DeclareLaunchArgument(
                 "v4l2_video_device",
@@ -383,7 +482,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_v4l2_preflight", default_value="true"),
             DeclareLaunchArgument(
                 "v4l2_expected_device_name",
-                default_value="TIER IV",
+                default_value="TIER IV,GMSL2-USB3.0 Conversion Kit",
                 description="Warn when v4l2-ctl --info does not contain this text.",
             ),
             DeclareLaunchArgument("v4l2_strict_device_check", default_value="false"),

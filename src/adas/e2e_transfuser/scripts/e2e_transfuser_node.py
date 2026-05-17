@@ -75,6 +75,9 @@ class E2ETransfuserNode(Node):
         self.lead_python_site = self.declare_parameter("lead_python_site", "").value
         self.lead_torch_lib = self.declare_parameter("lead_torch_lib", "").value
         self.runtime_device = self.declare_parameter("runtime_device", "cuda:0").value
+        self.input_preprocess_backend = self.declare_parameter(
+            "input_preprocess_backend", "cpu"
+        ).value
         self.lead_strict_weight_load = bool(
             self.declare_parameter("lead_strict_weight_load", False).value
         )
@@ -153,6 +156,7 @@ class E2ETransfuserNode(Node):
         )
         self.lead_runtime = None
         self.lead_forward_error = ""
+        self.lead_preprocess_latency_ms = None
         self.lead_forward_latency_ms = None
         self.lead_forward_count = 0
         if self.runtime_mode == "lead_python":
@@ -167,6 +171,7 @@ class E2ETransfuserNode(Node):
                 python_site=self.lead_python_site,
                 torch_lib=self.lead_torch_lib,
                 force_timm_pretrained_off=self.lead_force_timm_pretrained_off,
+                input_preprocess_backend=self.input_preprocess_backend,
             )
             extra_roots = [FilePath.cwd(), _SOURCE_ROOT.parents[2]]
             if self.lead_runtime.load(extra_roots=extra_roots):
@@ -365,6 +370,7 @@ class E2ETransfuserNode(Node):
             path = self.path_from_xy(now, forward.path_xy)
             steering, curvature = self.estimate_steering_from_path(path)
             self.lead_forward_latency_ms = forward.latency_ms
+            self.lead_preprocess_latency_ms = self.lead_runtime.last_preprocess_latency_ms
             self.lead_forward_count = self.lead_runtime.forward_count
             self.lead_forward_error = ""
             confidence = forward.confidence
@@ -493,6 +499,7 @@ class E2ETransfuserNode(Node):
             "runtime": self.runtime_mode,
             "precision": self.precision_mode,
             "runtime_device": self.runtime_device,
+            "input_preprocess_backend": self.input_preprocess_backend,
             "model_loaded": self.runtime_mode == "mock" or self.runtime_summary["ready"],
             "input_ready": input_ready,
             "missing_inputs": missing,
@@ -510,6 +517,7 @@ class E2ETransfuserNode(Node):
             "runtime_ready": self.runtime_summary["ready"],
             "runtime_blocking_reasons": self.runtime_summary["blocking_reasons"],
             "lead_forward_count": self.lead_forward_count,
+            "lead_preprocess_latency_ms": self.lead_preprocess_latency_ms,
             "lead_forward_latency_ms": self.lead_forward_latency_ms,
             "lead_forward_error": self.lead_forward_error,
         }

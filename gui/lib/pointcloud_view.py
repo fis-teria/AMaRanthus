@@ -24,6 +24,8 @@ class PointCloudView(QWidget):
         self._projection_basis = None
 
     def set_points(self, points: List[PointCloudPoint]) -> None:
+        if points is self.points:
+            return
         self.points = points
         self._update_view_bounds()
         self.update()
@@ -213,7 +215,7 @@ class PointCloudView(QWidget):
         jp_font.setPointSize(11)
         painter.setFont(jp_font)
 
-        painter.drawText(12, 24, "PointCloud: /livox/lidar 3D view")
+        painter.drawText(12, 24, "PointCloud 3D view")
         painter.drawText(12, 46, f"points: {len(self.points)}")
         painter.drawText(12, 68, f"range: +/-{self.max_range_m:.0f} m")
         painter.drawText(12, 90, f"height: {self.z_min_m:.2f}m - {self.z_max_m:.2f}m")

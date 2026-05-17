@@ -8,6 +8,7 @@ e2e_transfuser:
     lead_python_site: ""
     lead_torch_lib: ""
     runtime_device: cuda:0
+    input_preprocess_backend: cpu
     lead_strict_weight_load: false
     lead_probe_on_startup: true
     lead_force_timm_pretrained_off: true

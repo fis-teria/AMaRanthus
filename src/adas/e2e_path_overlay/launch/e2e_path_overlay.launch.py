@@ -39,9 +39,17 @@ def generate_launch_description():
                 "use_tf_translation",
                 default_value="true",
             ),
+            DeclareLaunchArgument(
+                "executable",
+                default_value="e2e_path_overlay_node",
+            ),
+            DeclareLaunchArgument(
+                "output_max_edge_px",
+                default_value="640",
+            ),
             Node(
                 package="e2e_path_overlay",
-                executable="e2e_path_overlay_node.py",
+                executable=LaunchConfiguration("executable"),
                 name="e2e_path_overlay",
                 output="screen",
                 parameters=[
@@ -56,6 +64,9 @@ def generate_launch_description():
                         "output_image_topic": LaunchConfiguration("output_image_topic"),
                         "use_tf_translation": ParameterValue(
                             LaunchConfiguration("use_tf_translation"), value_type=bool
+                        ),
+                        "output_max_edge_px": ParameterValue(
+                            LaunchConfiguration("output_max_edge_px"), value_type=int
                         ),
                     },
                 ],

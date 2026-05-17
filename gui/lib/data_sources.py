@@ -1,6 +1,7 @@
 import json
 import math
 import random
+import struct
 import time
 from typing import Callable, Optional
 
@@ -213,6 +214,9 @@ class Ros2DataSource(QObject):
         pointcloud_topic: str,
         pointcloud_max_points: int,
         pointcloud_min_update_interval_sec: float,
+        pointcloud_max_range_m: float,
+        pointcloud_z_min_m: float,
+        pointcloud_z_max_m: float,
         scan_topic: str,
         lane_topic: str,
         objects_topic: str,
@@ -244,6 +248,9 @@ class Ros2DataSource(QObject):
         self._pointcloud_min_update_interval_sec = max(
             0.0, float(pointcloud_min_update_interval_sec)
         )
+        self._pointcloud_max_range_m = max(1.0, float(pointcloud_max_range_m))
+        self._pointcloud_z_min_m = float(pointcloud_z_min_m)
+        self._pointcloud_z_max_m = float(pointcloud_z_max_m)
         self._scan_topic = scan_topic
         self._lane_topic = lane_topic
         self._objects_topic = objects_topic
@@ -334,6 +341,12 @@ class Ros2DataSource(QObject):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
+        camera_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         pointcloud_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
@@ -344,13 +357,13 @@ class Ros2DataSource(QObject):
             Image,
             self._camera_image_topic,
             self._on_camera_image,
-            best_effort_qos,
+            camera_qos,
         )
         node.create_subscription(
             Image,
             self._camera_overlay_topic,
             self._on_camera_overlay_image,
-            best_effort_qos,
+            camera_qos,
         )
         node.create_subscription(
             CameraInfo,
@@ -471,9 +484,17 @@ class Ros2DataSource(QObject):
     def _spin_once(self) -> None:
         if not self._node or self._rclpy is None:
             return
+        if not self._rclpy.ok():
+            if self._timer is not None:
+                self._timer.stop()
+            return
         try:
             self._node["executor"].spin_once(timeout_sec=0.0)
         except Exception as exc:
+            if self._rclpy is not None and not self._rclpy.ok():
+                if self._timer is not None:
+                    self._timer.stop()
+                return
             self._log("ERROR", f"ROS2 spin failed: {type(exc).__name__}: {exc}")
 
     def _emit_state(self) -> None:
@@ -542,7 +563,6 @@ class Ros2DataSource(QObject):
         ):
             return
 
-        points = []
         max_points = self._pointcloud_max_points
         total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
         stride = max(1, math.ceil(total_points / max_points))
@@ -560,25 +580,7 @@ class Ros2DataSource(QObject):
             )
 
         try:
-            cloud_iter = self._point_cloud2.read_points(
-                msg,
-                field_names=("x", "y", "z"),
-                skip_nans=True,
-            )
-            for index, point in enumerate(cloud_iter):
-                if index % stride != 0:
-                    continue
-                x_m, y_m, z_m = self._extract_xyz(point)
-                if (
-                    x_m is None
-                    or y_m is None
-                    or z_m is None
-                    or not all(math.isfinite(v) for v in (x_m, y_m, z_m))
-                ):
-                    continue
-                points.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
-                if len(points) >= max_points:
-                    break
+            points = self._sample_pointcloud(msg, stride=stride, max_points=max_points)
         except Exception as exc:
             self._pointcloud_parse_errors += 1
             self._log(
@@ -598,6 +600,104 @@ class Ros2DataSource(QObject):
                 ),
             )
         self._emit_state()
+
+    def _sample_pointcloud(self, msg, *, stride: int, max_points: int) -> list[PointCloudPoint]:
+        points = self._sample_pointcloud_direct(msg, stride=stride, max_points=max_points)
+        if points is not None:
+            return points
+
+        sampled = []
+        cloud_iter = self._point_cloud2.read_points(
+            msg,
+            field_names=("x", "y", "z"),
+            skip_nans=True,
+        )
+        for index, point in enumerate(cloud_iter):
+            if index % stride != 0:
+                continue
+            x_m, y_m, z_m = self._extract_xyz(point)
+            if self._pointcloud_point_is_visible(x_m, y_m, z_m):
+                sampled.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
+            if len(sampled) >= max_points:
+                break
+        return sampled
+
+    def _sample_pointcloud_direct(
+        self,
+        msg,
+        *,
+        stride: int,
+        max_points: int,
+    ) -> Optional[list[PointCloudPoint]]:
+        field_map = {field.name: field for field in getattr(msg, "fields", [])}
+        xyz_fields = [field_map.get(name) for name in ("x", "y", "z")]
+        if any(field is None for field in xyz_fields):
+            return None
+
+        endian = ">" if getattr(msg, "is_bigendian", False) else "<"
+        unpackers = []
+        for field in xyz_fields:
+            fmt = self._point_field_struct_format(field.datatype)
+            if fmt is None:
+                return None
+            unpackers.append((field.offset, struct.Struct(endian + fmt)))
+
+        point_step = int(getattr(msg, "point_step", 0))
+        if point_step <= 0:
+            return None
+
+        data = memoryview(msg.data)
+        width = int(getattr(msg, "width", 0))
+        height = max(1, int(getattr(msg, "height", 1)))
+        row_step = int(getattr(msg, "row_step", 0))
+        if width <= 0 or row_step <= 0:
+            return None
+        total_points = width * height
+        sampled = []
+        for point_index in range(0, total_points, stride):
+            row_index = point_index // width
+            column_index = point_index % width
+            base_offset = row_index * row_step + column_index * point_step
+            try:
+                x_m = float(unpackers[0][1].unpack_from(data, base_offset + unpackers[0][0])[0])
+                y_m = float(unpackers[1][1].unpack_from(data, base_offset + unpackers[1][0])[0])
+                z_m = float(unpackers[2][1].unpack_from(data, base_offset + unpackers[2][0])[0])
+            except (struct.error, ValueError):
+                continue
+            if self._pointcloud_point_is_visible(x_m, y_m, z_m):
+                sampled.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
+            if len(sampled) >= max_points:
+                break
+        return sampled
+
+    def _point_field_struct_format(self, datatype: int) -> Optional[str]:
+        return {
+            1: "b",
+            2: "B",
+            3: "h",
+            4: "H",
+            5: "i",
+            6: "I",
+            7: "f",
+            8: "d",
+        }.get(int(datatype))
+
+    def _pointcloud_point_is_visible(
+        self,
+        x_m: Optional[float],
+        y_m: Optional[float],
+        z_m: Optional[float],
+    ) -> bool:
+        if (
+            x_m is None
+            or y_m is None
+            or z_m is None
+            or not all(math.isfinite(v) for v in (x_m, y_m, z_m))
+        ):
+            return False
+        if z_m < self._pointcloud_z_min_m or z_m > self._pointcloud_z_max_m:
+            return False
+        return math.hypot(x_m, y_m) <= self._pointcloud_max_range_m
 
     def _extract_xyz(self, point) -> tuple[Optional[float], Optional[float], Optional[float]]:
         try:
@@ -730,6 +830,10 @@ class Ros2DataSource(QObject):
             return QImage(payload, width, height, step, QImage.Format_RGBA8888).copy()
         if encoding == "bgra8":
             return QImage(payload, width, height, step, QImage.Format_ARGB32).copy()
+        if encoding in ("yuv422", "uyvy"):
+            return self._yuv422_to_qimage(payload, width, height, step, "uyvy")
+        if encoding in ("yuv422_yuy2", "yuyv", "yuy2"):
+            return self._yuv422_to_qimage(payload, width, height, step, "yuyv")
         if encoding in (
             "mono8",
             "8uc1",
@@ -744,6 +848,20 @@ class Ros2DataSource(QObject):
             return QImage(grayscale, width, height, width, QImage.Format_Grayscale8).copy()
 
         raise ValueError(f"unsupported encoding: {msg.encoding}")
+
+    def _yuv422_to_qimage(self, payload: bytes, width: int, height: int, step: int, layout: str) -> QImage:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError as exc:
+            raise ValueError("yuv422 camera frames require cv2 and numpy") from exc
+
+        raw = np.frombuffer(payload, dtype=np.uint8).reshape(height, step)
+        yuv = raw[:, : width * 2].reshape(height, width, 2)
+        code = cv2.COLOR_YUV2RGB_UYVY if layout == "uyvy" else cv2.COLOR_YUV2RGB_YUY2
+        rgb = cv2.cvtColor(yuv, code)
+        rgb = np.ascontiguousarray(rgb)
+        return QImage(rgb.data, width, height, width * 3, QImage.Format_RGB888).copy()
 
     def _mono16_to_mono8(
         self,
