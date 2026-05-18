@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -8,9 +9,11 @@
 #include <utility>
 #include <vector>
 
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/image_encodings.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -122,6 +125,19 @@ struct OverlayImage
   std::string source_encoding;
 };
 
+struct OverlayTimingMs
+{
+  double total{0.0};
+  double overlay_convert{0.0};
+  double model_input{0.0};
+  double tf_lookup{0.0};
+  double project{0.0};
+  double yolo{0.0};
+  double draw{0.0};
+  double image_publish{0.0};
+  double jpeg_publish{0.0};
+};
+
 }  // namespace
 
 class E2EPathOverlayNode : public rclcpp::Node
@@ -140,7 +156,11 @@ public:
     path_topic_ = declare_parameter<std::string>("path_topic", "/shadow/e2e/path");
     yolo_detections_topic_ = declare_parameter<std::string>("yolo_detections_topic", "/yolo/tracking");
     output_image_topic_ = declare_parameter<std::string>("output_image_topic", "/shadow/e2e/overlay_image");
+    output_compressed_image_topic_ = declare_parameter<std::string>(
+      "output_compressed_image_topic", "/shadow/e2e/overlay_image/compressed");
     output_status_topic_ = declare_parameter<std::string>("output_status_topic", "/shadow/e2e/overlay_status");
+    model_input_image_topic_ = declare_parameter<std::string>(
+      "model_input_image_topic", "/shadow/e2e/model_input_image");
 
     use_tf_translation_ = declare_parameter<bool>("use_tf_translation", true);
     camera_x_m_ = declare_parameter<double>("camera_x_m", 1.2);
@@ -162,6 +182,10 @@ public:
     stale_yolo_timeout_sec_ = declare_parameter<double>("stale_yolo_timeout_sec", 1.0);
     stale_camera_info_timeout_sec_ = declare_parameter<double>("stale_camera_info_timeout_sec", 2.0);
     output_max_edge_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("output_max_edge_px", 640)));
+    model_input_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_width_px", 1152)));
+    model_input_height_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_height_px", 384)));
+    output_compressed_jpeg_quality_ = std::clamp<int>(
+      static_cast<int>(declare_parameter<int64_t>("output_compressed_jpeg_quality", 80)), 1, 100);
     publish_status_every_frame_ = declare_parameter<bool>("publish_status_every_frame", true);
 
     const auto ribbon_color = declare_color(*this, "path_ribbon_color_rgb", {0, 210, 120});
@@ -189,12 +213,22 @@ public:
       std::bind(&E2EPathOverlayNode::yolo_callback, this, std::placeholders::_1));
 
     overlay_pub_ = create_publisher<sensor_msgs::msg::Image>(output_image_topic_, rclcpp::SensorDataQoS());
+    if (!output_compressed_image_topic_.empty()) {
+      compressed_overlay_pub_ = create_publisher<sensor_msgs::msg::CompressedImage>(
+        output_compressed_image_topic_, rclcpp::SensorDataQoS());
+    }
+    if (!model_input_image_topic_.empty() && model_input_width_px_ > 0 && model_input_height_px_ > 0) {
+      model_input_pub_ = create_publisher<sensor_msgs::msg::Image>(
+        model_input_image_topic_, rclcpp::SensorDataQoS());
+    }
     status_pub_ = create_publisher<std_msgs::msg::String>(output_status_topic_, 10);
 
     RCLCPP_INFO(
       get_logger(),
-      "e2e_path_overlay C++ started images=%zu path=%s yolo=%s output_max_edge_px=%d",
-      image_topics_.size(), path_topic_.c_str(), yolo_detections_topic_.c_str(), output_max_edge_px_);
+      "e2e_path_overlay C++ started images=%zu path=%s yolo=%s output_max_edge_px=%d compressed=%s model_input=%s %dx%d",
+      image_topics_.size(), path_topic_.c_str(), yolo_detections_topic_.c_str(), output_max_edge_px_,
+      output_compressed_image_topic_.c_str(), model_input_image_topic_.c_str(),
+      model_input_width_px_, model_input_height_px_);
   }
 
 private:
@@ -218,12 +252,20 @@ private:
 
   void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
   {
+    const auto callback_start = std::chrono::steady_clock::now();
     const auto current_time = now();
     const auto overlay = make_overlay_image(msg);
+    const auto after_overlay = std::chrono::steady_clock::now();
     if (!overlay) {
-      publish_status(current_time, msg, 0, 0, 0, "unsupported_encoding:" + msg->encoding, std::nullopt, 0, 0);
+      OverlayTimingMs timing;
+      timing.overlay_convert = elapsed_ms(callback_start, after_overlay);
+      timing.total = timing.overlay_convert;
+      publish_status(
+        current_time, msg, 0, 0, 0, "unsupported_encoding:" + msg->encoding,
+        std::nullopt, 0, 0, timing);
       return;
     }
+    const double model_input_ms = publish_model_input_image(msg);
 
     if (!is_fresh(latest_camera_info_received_at_, current_time, stale_camera_info_timeout_sec_) ||
       !is_fresh(latest_path_received_at_, current_time, stale_path_timeout_sec_))
@@ -238,20 +280,29 @@ private:
         }
         missing += "path";
       }
+      OverlayTimingMs timing;
+      timing.overlay_convert = elapsed_ms(callback_start, after_overlay);
+      timing.model_input = model_input_ms;
+      timing.total = elapsed_ms(callback_start, std::chrono::steady_clock::now());
       publish_status(
         current_time, msg, 0, 0, 0, "missing_or_stale:" + missing, std::nullopt,
-        overlay->image_rgb.cols, overlay->image_rgb.rows);
+        overlay->image_rgb.cols, overlay->image_rgb.rows, timing);
       return;
     }
 
+    const auto before_tf = std::chrono::steady_clock::now();
     auto camera_translation = get_camera_translation(*latest_path_, *msg);
+    const auto after_tf = std::chrono::steady_clock::now();
     const auto camera_model = camera_model_from_info(*latest_camera_info_, *msg, overlay->scale_x, overlay->scale_y);
     const auto projected_points = project_path(*latest_path_, camera_model, camera_translation);
+    const auto after_project = std::chrono::steady_clock::now();
     auto yolo_boxes = fresh_yolo_boxes(current_time, *msg, overlay->scale_x, overlay->scale_y);
+    const auto after_yolo = std::chrono::steady_clock::now();
 
     cv::Mat drawn = overlay->image_rgb.clone();
     draw_path(drawn, projected_points);
     draw_boxes(drawn, yolo_boxes);
+    const auto after_draw = std::chrono::steady_clock::now();
 
     auto output = std::make_unique<sensor_msgs::msg::Image>();
     output->header = msg->header;
@@ -262,16 +313,29 @@ private:
     output->step = static_cast<uint32_t>(drawn.cols * 3);
     output->data.assign(drawn.datastart, drawn.dataend);
     overlay_pub_->publish(std::move(output));
+    const auto after_image_publish = std::chrono::steady_clock::now();
+    const double jpeg_publish_ms = publish_compressed_overlay(drawn, msg->header);
+    const auto after_jpeg_publish = std::chrono::steady_clock::now();
 
     const int drawn_segments = count_drawn_segments(projected_points);
     if (publish_status_every_frame_) {
+      OverlayTimingMs timing;
+      timing.total = elapsed_ms(callback_start, after_jpeg_publish);
+      timing.overlay_convert = elapsed_ms(callback_start, after_overlay);
+      timing.model_input = model_input_ms;
+      timing.tf_lookup = elapsed_ms(before_tf, after_tf);
+      timing.project = elapsed_ms(after_tf, after_project);
+      timing.yolo = elapsed_ms(after_project, after_yolo);
+      timing.draw = elapsed_ms(after_yolo, after_draw);
+      timing.image_publish = elapsed_ms(after_draw, after_image_publish);
+      timing.jpeg_publish = jpeg_publish_ms;
       publish_status(
         current_time, msg,
         static_cast<int>(std::count_if(projected_points.begin(), projected_points.end(), [](const auto & p) {
           return p.has_value();
         })),
         drawn_segments, static_cast<int>(yolo_boxes.size()), "", camera_translation,
-        drawn.cols, drawn.rows);
+        drawn.cols, drawn.rows, timing);
     }
   }
 
@@ -288,43 +352,129 @@ private:
     const double scale_x = static_cast<double>(target.width) / static_cast<double>(width);
     const double scale_y = static_cast<double>(target.height) / static_cast<double>(height);
     const auto & encoding = msg->encoding;
-    cv::Mat rgb;
 
-    try {
-      if (encoding == sensor_msgs::image_encodings::YUV422 || encoding == "uyvy") {
-        rgb = yuv422_to_rgb_scaled(msg->data.data(), width, height, step, target, true);
-      } else if (encoding == sensor_msgs::image_encodings::YUV422_YUY2 ||
-        encoding == "yuyv" || encoding == "yuy2")
-      {
-        rgb = yuv422_to_rgb_scaled(msg->data.data(), width, height, step, target, false);
-      } else if (encoding == sensor_msgs::image_encodings::RGB8 || encoding == "8UC3") {
-        cv::Mat image(height, width, CV_8UC3, const_cast<unsigned char *>(msg->data.data()), step);
-        rgb = resize_if_needed(image, target, cv::INTER_AREA);
-      } else if (encoding == sensor_msgs::image_encodings::BGR8) {
-        cv::Mat image(height, width, CV_8UC3, const_cast<unsigned char *>(msg->data.data()), step);
-        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
-        cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
-      } else if (encoding == sensor_msgs::image_encodings::RGBA8) {
-        cv::Mat image(height, width, CV_8UC4, const_cast<unsigned char *>(msg->data.data()), step);
-        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
-        cv::cvtColor(resized, rgb, cv::COLOR_RGBA2RGB);
-      } else if (encoding == sensor_msgs::image_encodings::BGRA8) {
-        cv::Mat image(height, width, CV_8UC4, const_cast<unsigned char *>(msg->data.data()), step);
-        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
-        cv::cvtColor(resized, rgb, cv::COLOR_BGRA2RGB);
-      } else if (encoding == sensor_msgs::image_encodings::MONO8 || encoding == "8UC1") {
-        cv::Mat image(height, width, CV_8UC1, const_cast<unsigned char *>(msg->data.data()), step);
-        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
-        cv::cvtColor(resized, rgb, cv::COLOR_GRAY2RGB);
-      } else {
-        return std::nullopt;
-      }
-    } catch (const cv::Exception & exc) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Overlay image conversion failed: %s", exc.what());
+    auto rgb = image_to_rgb(*msg, target);
+    if (!rgb) {
       return std::nullopt;
     }
 
-    return OverlayImage{rgb, msg, scale_x, scale_y, encoding};
+    return OverlayImage{*rgb, msg, scale_x, scale_y, encoding};
+  }
+
+  double publish_model_input_image(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
+  {
+    const auto start = std::chrono::steady_clock::now();
+    if (!model_input_pub_) {
+      return 0.0;
+    }
+    auto rgb = image_to_rgb(*msg, cv::Size(model_input_width_px_, model_input_height_px_));
+    if (!rgb) {
+      return elapsed_ms(start, std::chrono::steady_clock::now());
+    }
+    auto output = make_rgb_image_msg(*rgb, msg->header);
+    model_input_pub_->publish(std::move(output));
+    return elapsed_ms(start, std::chrono::steady_clock::now());
+  }
+
+  std::optional<cv::Mat> image_to_rgb(const sensor_msgs::msg::Image & msg, const cv::Size & target)
+  {
+    const int width = static_cast<int>(msg.width);
+    const int height = static_cast<int>(msg.height);
+    const int step = static_cast<int>(msg.step);
+    if (width <= 0 || height <= 0 || step <= 0 || msg.data.empty() || target.width <= 0 || target.height <= 0) {
+      return std::nullopt;
+    }
+
+    const auto & encoding = msg.encoding;
+    try {
+      if (encoding == sensor_msgs::image_encodings::YUV422 || encoding == "uyvy") {
+        return yuv422_to_rgb_scaled(msg.data.data(), width, height, step, target, true);
+      }
+      if (encoding == sensor_msgs::image_encodings::YUV422_YUY2 ||
+        encoding == "yuyv" || encoding == "yuy2")
+      {
+        return yuv422_to_rgb_scaled(msg.data.data(), width, height, step, target, false);
+      }
+      if (encoding == sensor_msgs::image_encodings::RGB8 || encoding == "8UC3") {
+        cv::Mat image(height, width, CV_8UC3, const_cast<unsigned char *>(msg.data.data()), step);
+        return resize_if_needed(image, target, cv::INTER_AREA);
+      }
+      if (encoding == sensor_msgs::image_encodings::BGR8) {
+        cv::Mat image(height, width, CV_8UC3, const_cast<unsigned char *>(msg.data.data()), step);
+        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
+        cv::Mat rgb;
+        cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+        return rgb;
+      }
+      if (encoding == sensor_msgs::image_encodings::RGBA8) {
+        cv::Mat image(height, width, CV_8UC4, const_cast<unsigned char *>(msg.data.data()), step);
+        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
+        cv::Mat rgb;
+        cv::cvtColor(resized, rgb, cv::COLOR_RGBA2RGB);
+        return rgb;
+      }
+      if (encoding == sensor_msgs::image_encodings::BGRA8) {
+        cv::Mat image(height, width, CV_8UC4, const_cast<unsigned char *>(msg.data.data()), step);
+        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
+        cv::Mat rgb;
+        cv::cvtColor(resized, rgb, cv::COLOR_BGRA2RGB);
+        return rgb;
+      }
+      if (encoding == sensor_msgs::image_encodings::MONO8 || encoding == "8UC1") {
+        cv::Mat image(height, width, CV_8UC1, const_cast<unsigned char *>(msg.data.data()), step);
+        cv::Mat resized = resize_if_needed(image, target, cv::INTER_AREA);
+        cv::Mat rgb;
+        cv::cvtColor(resized, rgb, cv::COLOR_GRAY2RGB);
+        return rgb;
+      }
+    } catch (const cv::Exception & exc) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Image conversion failed: %s", exc.what());
+      return std::nullopt;
+    }
+    return std::nullopt;
+  }
+
+  sensor_msgs::msg::Image::UniquePtr make_rgb_image_msg(
+    const cv::Mat & rgb,
+    const std_msgs::msg::Header & header) const
+  {
+    auto output = std::make_unique<sensor_msgs::msg::Image>();
+    output->header = header;
+    output->height = static_cast<uint32_t>(rgb.rows);
+    output->width = static_cast<uint32_t>(rgb.cols);
+    output->encoding = sensor_msgs::image_encodings::RGB8;
+    output->is_bigendian = 0;
+    output->step = static_cast<uint32_t>(rgb.cols * 3);
+    output->data.assign(rgb.datastart, rgb.dataend);
+    return output;
+  }
+
+  double publish_compressed_overlay(
+    const cv::Mat & rgb,
+    const std_msgs::msg::Header & header)
+  {
+    const auto start = std::chrono::steady_clock::now();
+    if (!compressed_overlay_pub_) {
+      return 0.0;
+    }
+    try {
+      cv::Mat bgr;
+      cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+      std::vector<uint8_t> encoded;
+      const std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, output_compressed_jpeg_quality_};
+      if (!cv::imencode(".jpg", bgr, encoded, params)) {
+        return elapsed_ms(start, std::chrono::steady_clock::now());
+      }
+      auto output = std::make_unique<sensor_msgs::msg::CompressedImage>();
+      output->header = header;
+      output->format = "jpeg";
+      output->data = std::move(encoded);
+      compressed_overlay_pub_->publish(std::move(output));
+    } catch (const cv::Exception & exc) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000, "Compressed overlay encode failed: %s", exc.what());
+    }
+    return elapsed_ms(start, std::chrono::steady_clock::now());
   }
 
   cv::Mat yuv422_to_rgb_scaled(
@@ -639,6 +789,13 @@ private:
     return age_sec >= 0.0 && age_sec <= timeout_sec;
   }
 
+  static double elapsed_ms(
+    const std::chrono::steady_clock::time_point & start,
+    const std::chrono::steady_clock::time_point & end)
+  {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+  }
+
   void publish_status(
     const rclcpp::Time & current_time,
     const sensor_msgs::msg::Image::ConstSharedPtr & image,
@@ -648,7 +805,8 @@ private:
     const std::string & skipped_reason,
     const std::optional<CameraTranslation> & camera_translation,
     int overlay_width,
-    int overlay_height)
+    int overlay_height,
+    const OverlayTimingMs & timing)
   {
     std_msgs::msg::String status;
     std::ostringstream payload;
@@ -666,6 +824,17 @@ private:
     payload << ",\"drawn_segments\":" << drawn_segments;
     payload << ",\"yolo_box_count\":" << yolo_box_count;
     payload << ",\"skipped_reason\":\"" << json_escape(skipped_reason) << "\"";
+    payload << ",\"timing_ms\":{";
+    payload << "\"total\":" << timing.total;
+    payload << ",\"overlay_convert\":" << timing.overlay_convert;
+    payload << ",\"model_input\":" << timing.model_input;
+    payload << ",\"tf_lookup\":" << timing.tf_lookup;
+    payload << ",\"project\":" << timing.project;
+    payload << ",\"yolo\":" << timing.yolo;
+    payload << ",\"draw\":" << timing.draw;
+    payload << ",\"image_publish\":" << timing.image_publish;
+    payload << ",\"jpeg_publish\":" << timing.jpeg_publish;
+    payload << "}";
     if (camera_translation) {
       payload << ",\"camera_translation\":{";
       payload << "\"source\":\"" << json_escape(camera_translation->source) << "\"";
@@ -686,7 +855,9 @@ private:
   std::string path_topic_;
   std::string yolo_detections_topic_;
   std::string output_image_topic_;
+  std::string output_compressed_image_topic_;
   std::string output_status_topic_;
+  std::string model_input_image_topic_;
 
   bool use_tf_translation_{true};
   double camera_x_m_{1.2};
@@ -708,6 +879,9 @@ private:
   double stale_yolo_timeout_sec_{1.0};
   double stale_camera_info_timeout_sec_{2.0};
   int output_max_edge_px_{640};
+  int model_input_width_px_{1152};
+  int model_input_height_px_{384};
+  int output_compressed_jpeg_quality_{80};
   bool publish_status_every_frame_{true};
 
   cv::Scalar path_ribbon_color_rgb_{0, 210, 120};
@@ -720,6 +894,8 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<yolo_msgs::msg::DetectionArray>::SharedPtr yolo_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr overlay_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_overlay_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr model_input_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
 
   sensor_msgs::msg::CameraInfo::SharedPtr latest_camera_info_;

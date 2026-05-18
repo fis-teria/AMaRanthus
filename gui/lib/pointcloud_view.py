@@ -8,15 +8,25 @@ from .models import PointCloudPoint
 
 
 class PointCloudView(QWidget):
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        fixed_range_m: float = 80.0,
+        fixed_z_min_m: float = -3.0,
+        fixed_z_max_m: float = 3.0,
+    ):
         super().__init__(parent)
         self.setMinimumSize(500, 500)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
         self.points: List[PointCloudPoint] = []
-        self.max_range_m = 30.0
-        self.z_min_m = -2.0
-        self.z_max_m = 2.0
+        self.max_range_m = max(5.0, float(fixed_range_m))
+        self.z_min_m = float(fixed_z_min_m)
+        self.z_max_m = float(fixed_z_max_m)
+        if self.z_max_m - self.z_min_m < 0.1:
+            self.z_min_m -= 0.05
+            self.z_max_m += 0.05
         self.yaw_rad = 0.0
         self.pitch_rad = 0.72
         self.zoom = 1.0
@@ -27,28 +37,7 @@ class PointCloudView(QWidget):
         if points is self.points:
             return
         self.points = points
-        self._update_view_bounds()
         self.update()
-
-    def _update_view_bounds(self) -> None:
-        if not self.points:
-            self.max_range_m = 30.0
-            self.z_min_m = -2.0
-            self.z_max_m = 2.0
-            return
-
-        max_range = 10.0
-        z_values = []
-        for point in self.points:
-            max_range = max(max_range, abs(point.x_m), abs(point.y_m))
-            z_values.append(point.z_m)
-
-        self.max_range_m = min(max(max_range * 1.15, 20.0), 120.0)
-        self.z_min_m = min(z_values)
-        self.z_max_m = max(z_values)
-        if self.z_max_m - self.z_min_m < 0.1:
-            self.z_min_m -= 0.05
-            self.z_max_m += 0.05
 
     def _world_point(self, point: PointCloudPoint) -> tuple[float, float, float]:
         return -point.y_m, point.x_m, point.z_m

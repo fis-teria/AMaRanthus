@@ -55,6 +55,9 @@ class MainWindow(QMainWindow):
         render_config: UiRenderConfig,
         initial_data_source: str = "demo",
         initial_theme: str = "dark",
+        pointcloud_view_range_m: float = 80.0,
+        pointcloud_view_z_min_m: float = -3.0,
+        pointcloud_view_z_max_m: float = 3.0,
         gpu_monitor_interval_sec: float = 1.0,
         gpu_monitor_enabled: bool = True,
     ):
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         self._ros2_available_fields: set[str] = set()
         self._topic_buttons: dict[str, QPushButton] = {}
         self._last_states: dict[str, UiState] = {}
+        self._current_left_view = "camera"
         self._theme = normalize_theme(initial_theme)
         self._normal_window_geometry = None
         self._normal_window_flags = self.windowFlags()
@@ -148,7 +152,11 @@ class MainWindow(QMainWindow):
         map_layout.addLayout(route_bar)
         map_layout.addWidget(self.map_widget, 1)
 
-        self.pointcloud_view = PointCloudView()
+        self.pointcloud_view = PointCloudView(
+            fixed_range_m=pointcloud_view_range_m,
+            fixed_z_min_m=pointcloud_view_z_min_m,
+            fixed_z_max_m=pointcloud_view_z_max_m,
+        )
         self.camera_view = CameraView()
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(map_container)
@@ -249,6 +257,7 @@ class MainWindow(QMainWindow):
 
     def switch_left_view(self, view_name: str) -> None:
         self.left_stack.setCurrentIndex(self._left_view_indexes.get(view_name, 0))
+        self._current_left_view = view_name
 
         self.map_view_button.blockSignals(True)
         self.pointcloud_view_button.blockSignals(True)
@@ -259,6 +268,7 @@ class MainWindow(QMainWindow):
         self.map_view_button.blockSignals(False)
         self.pointcloud_view_button.blockSignals(False)
         self.camera_view_button.blockSignals(False)
+        self._refresh_pointcloud_parser_state()
 
     def toggle_full_screen(self) -> None:
         if self._borderless_full_screen or self.isFullScreen():
@@ -341,6 +351,7 @@ class MainWindow(QMainWindow):
 
         self._active_sources[field_name] = "ros2" if use_ros2 else "demo"
         self._update_topic_button(field_name)
+        self._refresh_pointcloud_parser_state()
         self._apply_composed_state()
 
     def _on_dark_mode_toggled(self, state: int) -> None:
@@ -356,9 +367,13 @@ class MainWindow(QMainWindow):
         self.dark_mode_checkbox.blockSignals(False)
 
     def _start_data_sources(self) -> None:
-        demo_source = self._data_sources["demo"]
-        demo_source.start(lambda state: self._on_data_source_state("demo", state))
-        self.log_message("INFO", "Demo data source started.")
+        if self._auto_activate_ros2_fields:
+            self._last_states["demo"] = self._blank_ui_state()
+            self.log_message("INFO", "Demo data source kept idle for ROS2-first mode.")
+        else:
+            demo_source = self._data_sources["demo"]
+            demo_source.start(lambda state: self._on_data_source_state("demo", state))
+            self.log_message("INFO", "Demo data source started.")
 
         ros2_source = self._data_sources.get("ros2")
         if ros2_source is None:
@@ -369,6 +384,7 @@ class MainWindow(QMainWindow):
         ros2_source.set_log_callback(self.log_message)
         try:
             ros2_source.start(lambda state: self._on_data_source_state("ros2", state))
+            self._refresh_pointcloud_parser_state()
         except RuntimeError as exc:
             print(f"[WARN] ROS2 data source disabled: {exc}", file=sys.stderr)
             self.log_message("WARN", f"ROS2 data source disabled: {exc}")
@@ -398,9 +414,22 @@ class MainWindow(QMainWindow):
             self._active_sources[field_name] = "ros2"
 
         self._update_topic_button(field_name)
+        self._refresh_pointcloud_parser_state()
         self._apply_composed_state()
         if not was_available:
             self.log_message("INFO", f"ROS2 field enabled: {self._topic_label(field_name)}")
+
+    def _refresh_pointcloud_parser_state(self) -> None:
+        ros2_source = self._data_sources.get("ros2")
+        if ros2_source is None or not hasattr(ros2_source, "set_pointcloud_view_enabled"):
+            return
+        pointcloud_source_is_ros2 = (
+            self._active_sources.get("pointcloud") == "ros2"
+            and "pointcloud" in self._ros2_available_fields
+        )
+        ros2_source.set_pointcloud_view_enabled(
+            self._current_left_view == "pointcloud" and pointcloud_source_is_ros2
+        )
 
     def _apply_composed_state(self) -> None:
         demo_state = self._last_states.get("demo")
@@ -435,6 +464,19 @@ class MainWindow(QMainWindow):
             gps_status=field_source("gps").gps_status,
             shadow=field_source("shadow").shadow,
             camera_frame=field_source("camera").camera_frame,
+        )
+
+    def _blank_ui_state(self) -> UiState:
+        return UiState(
+            scan_points=[],
+            lane_points=[],
+            pointcloud_points=[],
+            objects=[],
+            speed_kmh=0.0,
+            min_distance_m=99.0,
+            obstacle_count=0,
+            mode="--",
+            gps_status="--",
         )
 
     def _update_topic_button(self, field_name: str) -> None:
@@ -472,7 +514,10 @@ def build_data_sources(
     *,
     ros_camera_image_topic: str,
     ros_camera_overlay_topic: str,
+    ros_camera_compressed_overlay_topic: str,
     ros_camera_overlay_timeout_sec: float,
+    ros_camera_raw_overlay_fallback: bool,
+    ros_camera_raw_fallback: bool,
     ros_camera_display_max_edge_px: int,
     ros_camera_info_topic: str,
     ros_pointcloud_topic: str,
@@ -504,7 +549,10 @@ def build_data_sources(
         "ros2": Ros2DataSource(
             camera_image_topic=ros_camera_image_topic,
             camera_overlay_topic=ros_camera_overlay_topic,
+            camera_compressed_overlay_topic=ros_camera_compressed_overlay_topic,
             camera_overlay_timeout_sec=ros_camera_overlay_timeout_sec,
+            camera_raw_overlay_fallback=ros_camera_raw_overlay_fallback,
+            camera_raw_fallback=ros_camera_raw_fallback,
             camera_display_max_edge_px=ros_camera_display_max_edge_px,
             camera_info_topic=ros_camera_info_topic,
             pointcloud_topic=ros_pointcloud_topic,

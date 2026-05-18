@@ -133,13 +133,16 @@ uv run main.py \
 
 - `--ros-camera-image-topic`: `sensor_msgs/msg/Image`
 - `--ros-camera-overlay-topic`: `sensor_msgs/msg/Image`。既定の `/shadow/e2e/overlay_image` が流れている間は通常カメラ画像より優先して Camera view に表示します。
+- `--ros-camera-compressed-overlay-topic`: `sensor_msgs/msg/CompressedImage`。既定の `/shadow/e2e/overlay_image/compressed` を Camera view に優先表示します。
 - `--ros-camera-overlay-timeout-sec`: overlay 画像が途切れてから通常カメラ画像へ戻すまでの秒数
+- `--no-ros-camera-raw-overlay-fallback`: compressed overlay だけを Camera view に使い、raw overlay image の購読を無効化します。E2E launcher 経由の `run_gui.sh` では既定で有効です。
+- `--no-ros-camera-raw-fallback`: overlay だけを Camera view に使い、raw camera image の購読を無効化します。E2E launcher 経由の `run_gui.sh` では既定で有効です。
 - `--ros-camera-display-max-edge-px`: Camera view に渡す前に画像の長辺をこの値へ縮小します。`0` で縮小を無効化します。
 - `--ros-camera-info-topic`: `sensor_msgs/msg/CameraInfo`
 - `--ros-pointcloud-topic`: `sensor_msgs/msg/PointCloud2`。既定は FAST-LIO の `/cloud_registered` です。
 - `--ros-pointcloud-max-points`: PointCloud view に渡す最大点数。既定は `2500` です。
-- `--ros-pointcloud-min-update-interval-sec`: PointCloud view の最短更新間隔。既定は `0.2` 秒です。
-- `--ros-pointcloud-max-range-m`: PointCloud view に渡す最大水平距離。既定は `80.0` m です。
+- `--ros-pointcloud-min-update-interval-sec`: PointCloud view 表示中に別 worker で点群を parse する最短更新間隔。既定は `0.2` 秒です。
+- `--ros-pointcloud-max-range-m`: PointCloud view に渡す最大水平距離。既定は `80.0` m です。3D view の表示レンジもこの値で固定します。
 - `--ros-pointcloud-z-min-m` / `--ros-pointcloud-z-max-m`: PointCloud view に渡す高さ範囲。既定は `-3.0` m から `3.0` m です。
 - `--ros-scan-topic`: `sensor_msgs/msg/LaserScan`
 - `--ros-lane-topic`: `sensor_msgs/msg/LaserScan`
@@ -163,7 +166,7 @@ shadow-mode 欄は以下の `std_msgs/msg/Float32` と `std_msgs/msg/String` を
 - `/shadow/metrics/intervention_score`
 - `/shadow/metrics/summary`
 
-`gui/run_gui.sh` から起動する場合は、`GUI_THEME=light ./gui/run_gui.sh`、`ROS_CAMERA_IMAGE_TOPIC=/foo ROS_CAMERA_OVERLAY_TOPIC=/bar ROS_CAMERA_DISPLAY_MAX_EDGE_PX=960 ROS_CAMERA_INFO_TOPIC=/bar ./gui/run_gui.sh`、`ROS_POINTCLOUD_TOPIC=/cloud_registered ROS_POINTCLOUD_MAX_POINTS=1800 ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC=0.25 ROS_POINTCLOUD_MAX_RANGE_M=60 ./gui/run_gui.sh`、`ROS_SHADOW_INTERVENTION_SCORE_TOPIC=/foo ./gui/run_gui.sh` のように環境変数で上書きできます。
+`gui/run_gui.sh` から起動する場合は、`GUI_THEME=light ./gui/run_gui.sh`、`ROS_CAMERA_IMAGE_TOPIC=/foo ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC=/bar ROS_CAMERA_DISPLAY_MAX_EDGE_PX=960 ROS_CAMERA_INFO_TOPIC=/bar ./gui/run_gui.sh`、`ROS_CAMERA_RAW_OVERLAY_FALLBACK=1 ./gui/run_gui.sh`、`ROS_POINTCLOUD_TOPIC=/cloud_registered ROS_POINTCLOUD_MAX_POINTS=1800 ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC=0.25 ROS_POINTCLOUD_MAX_RANGE_M=60 ./gui/run_gui.sh`、`ROS_SHADOW_INTERVENTION_SCORE_TOPIC=/foo ./gui/run_gui.sh` のように環境変数で上書きできます。
 
 GUI の見た目は `gui/config/ui.yaml` で調整できます。必要なら `--ui-config` で別ファイルも指定できます。
 

@@ -16,6 +16,7 @@ e2e_transfuser:
     image_fallback_topics:
       - /sensing/camera/camera0/image_rect_color
       - /image_rect_color
+    disable_image_fallback_topics: false
     camera_info_topic: /sensing/camera/camera0/camera_info
     pointcloud_topic: /livox/lidar
     sensor_input_mode: auto

@@ -27,7 +27,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--ros-camera-image-topic", default="/sensing/camera/camera0/image_rect_color")
     parser.add_argument("--ros-camera-overlay-topic", default="/shadow/e2e/overlay_image")
+    parser.add_argument(
+        "--ros-camera-compressed-overlay-topic",
+        default="/shadow/e2e/overlay_image/compressed",
+    )
     parser.add_argument("--ros-camera-overlay-timeout-sec", type=float, default=1.0)
+    parser.add_argument(
+        "--no-ros-camera-raw-overlay-fallback",
+        dest="ros_camera_raw_overlay_fallback",
+        action="store_false",
+        default=True,
+        help="Compressed overlay imageだけを購読し、raw overlay image fallbackを無効化します。",
+    )
+    parser.add_argument(
+        "--no-ros-camera-raw-fallback",
+        dest="ros_camera_raw_fallback",
+        action="store_false",
+        default=True,
+        help="Overlay imageだけを購読し、raw camera image fallbackを無効化します。",
+    )
     parser.add_argument("--ros-camera-display-max-edge-px", type=int, default=1280)
     parser.add_argument("--ros-camera-info-topic", default="/sensing/camera/camera0/camera_info")
     parser.add_argument("--ros-pointcloud-topic", default="/cloud_registered")
@@ -95,7 +113,10 @@ def main() -> None:
     data_sources = build_data_sources(
         ros_camera_image_topic=args.ros_camera_image_topic,
         ros_camera_overlay_topic=args.ros_camera_overlay_topic,
+        ros_camera_compressed_overlay_topic=args.ros_camera_compressed_overlay_topic,
         ros_camera_overlay_timeout_sec=args.ros_camera_overlay_timeout_sec,
+        ros_camera_raw_overlay_fallback=args.ros_camera_raw_overlay_fallback,
+        ros_camera_raw_fallback=args.ros_camera_raw_fallback,
         ros_camera_display_max_edge_px=args.ros_camera_display_max_edge_px,
         ros_camera_info_topic=args.ros_camera_info_topic,
         ros_pointcloud_topic=args.ros_pointcloud_topic,
@@ -129,6 +150,9 @@ def main() -> None:
             render_config,
             initial_data_source=args.data_source,
             initial_theme=active_theme,
+            pointcloud_view_range_m=args.ros_pointcloud_max_range_m,
+            pointcloud_view_z_min_m=args.ros_pointcloud_z_min_m,
+            pointcloud_view_z_max_m=args.ros_pointcloud_z_max_m,
             gpu_monitor_interval_sec=args.gpu_monitor_interval_sec,
             gpu_monitor_enabled=not args.disable_gpu_monitor,
         )

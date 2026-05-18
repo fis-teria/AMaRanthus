@@ -1,0 +1,19 @@
+shadow_route_target:
+  ros__parameters:
+    output_topic: /shadow/route/target_point
+    status_topic: /shadow/route/target_status
+    route_command_topic: /shadow/route/command
+    publish_route_command: true
+    route_command: lane_follow
+    publish_rate_hz: 10.0
+    input_timeout_sec: 0.5
+    lookahead_distance_m: 15.0
+    min_forward_distance_m: 1.0
+    source_priority: gui_route,image_lane,shadow_virtual
+    gui_route_path_topic: /shadow/route/gui_path
+    image_lane_path_topic: /shadow/perception/lane_path
+    shadow_virtual_path_topic: /shadow/virtual/path
+    default_frame_id: base_link
+    default_target_x_m: 15.0
+    default_target_y_m: 0.0
+    publish_default_when_missing: false

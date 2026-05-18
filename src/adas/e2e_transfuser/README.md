@@ -4,15 +4,15 @@
 
 初期実装では実車制御 command を publish せず、camera + optional LiDAR + odometry + route proxy から `/shadow/e2e/*` に仮想 E2E 出力を publish します。
 
-`sensor_input_mode` は `auto` / `camera_lidar` / `camera_only` を選べます。デフォルトの `auto` では `/livox/lidar` が `input_timeout_sec` より古くなったときに camera-only として入力待ちを継続し、`/shadow/e2e/status` の `active_sensor_input_mode` と `missing_optional_inputs` で現在の状態を確認できます。camera-only では LiDAR 由来の odometry や route target も任意入力に落とし、画像と camera_info だけで mock E2E 出力を維持します。
+`sensor_input_mode` は `auto` / `camera_lidar` / `camera_only` を選べます。デフォルトの `auto` では `/cloud_registered` が `input_timeout_sec` より古くなったときに camera-only として入力待ちを継続し、`/shadow/e2e/status` の `active_sensor_input_mode` と `missing_optional_inputs` で現在の状態を確認できます。camera-only では LiDAR 由来の odometry や route target も任意入力に落とし、画像と camera_info だけで mock E2E 出力を維持します。
 
 `shadow_mode_e2e_transfuser.launch.py` はデフォルトで YOLO も起動します。`/yolo/tracking` を `e2e_path_overlay` が購読し、overlay 画像へ検出bboxを重ねます。debug image node は重さを避けるため `yolo_use_debug:=false` にしています。YOLO は既定で `Data/venvs/yolo_ros_cuda` の CUDA 対応 Torch と `Data/models/yolo/yolo11n.pt` を使い、`yolo_device:=cuda:0` で起動します。GPU を使わない場合は `yolo_device:=cpu` を指定してください。
 
-`shadow_mode_e2e_transfuser.launch.py` はデフォルトで Livox lane detection も起動します。Livox driver は `camera_lidar_bringup` 側で起動するため、E2E から呼び出す `livox_lane_detection_live.launch.py` では `launch_livox_driver:=false` に固定しています。lane detection だけ止めたい場合は `use_livox_lane_detection:=false` を指定してください。`use_adas_bringup:=true` でフル ADAS bringup 側から lane detection を起動する場合も、二重起動を避けるため `use_livox_lane_detection:=false` を併用してください。
+`shadow_mode_e2e_transfuser.launch.py` は E2E 10Hz 経路を優先するため、デフォルトでは Livox lane detection を起動しません。lane detection を試す場合は `use_livox_lane_detection:=true` を指定してください。Livox driver は `camera_lidar_bringup` 側で起動するため、E2E から呼び出す `livox_lane_detection_live.launch.py` では `launch_livox_driver:=false` に固定しています。lane detection は既定で scan-only、`lane_detection_max_process_rate_hz:=5.0`、`lane_detection_device:=cuda:0` です。CUDA が使えない libtorch/runtime では CPU に fallback します。`use_adas_bringup:=true` でフル ADAS bringup 側から lane detection を起動する場合も、二重起動を避けるため `use_livox_lane_detection:=false` を併用してください。
 
 `livox_lane_detection` は C++ TorchScript node なので、ビルドと実行は `/opt/libtorch` を使います。Python wheel の `Data/venvs/yolo_ros_cuda/.../torch/lib` と混ぜると `libc10_cuda.so` の symbol lookup error が出るため、E2E launch は `lane_detection_torch_lib_path:=/opt/libtorch/lib` を既定で lane detection node の `LD_LIBRARY_PATH` 先頭に入れます。
 
-`shadow_mode_e2e_transfuser.launch.py` はデフォルトで ADAS description と FAST-LIO も単独起動します。description は `use_adas_description:=true` で `adas_robot_state_publisher` を起動し、`adas_livox.urdf` から `base_link` / `livox_frame` / `camera0` の TF を publish します。FAST-LIO は `use_fast_lio:=true` で `fast_lio` の `mapping.launch.py` を起動し、既定では `/Odometry` を E2E と shadow ego estimation の共通 odometry 入力にします。`shadow_virtual_control` は `virtual_input_mode:=pointcloud` のまま `/livox/lidar` を使います。
+`shadow_mode_e2e_transfuser.launch.py` はデフォルトで ADAS description と FAST-LIO も単独起動します。description は `use_adas_description:=true` で `adas_robot_state_publisher` を起動し、`adas_livox.urdf` から `base_link` / `livox_frame` / `camera0` の TF を publish します。FAST-LIO は `use_fast_lio:=true` で `fast_lio` の `mapping.launch.py` を起動し、既定では `/Odometry` を E2E と shadow ego estimation の共通 odometry 入力にします。`shadow_virtual_control` は `virtual_input_mode:=pointcloud` のまま FAST-LIO の `/cloud_registered` を使います。
 
 V4L2 カメラは既定で Tier IV C2 profile を使います。USB 差し替えで `/dev/video0` が別カメラになる場合は、`use_v4l2_preflight:=true` により `TIER IV` または `GMSL2-USB3.0 Conversion Kit` に合う Video Capture デバイスを自動選択します。明示固定したい場合は `v4l2_video_device:=/dev/v4l/by-id/...` または `/dev/v4l/by-path/...` を指定してください。誤デバイスで続行したくない場合は `v4l2_strict_device_check:=true` を併用してください。
 

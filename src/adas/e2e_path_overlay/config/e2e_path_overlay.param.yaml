@@ -8,7 +8,12 @@ e2e_path_overlay:
     path_topic: /shadow/e2e/path
     yolo_detections_topic: /yolo/tracking
     output_image_topic: /shadow/e2e/overlay_image
+    output_compressed_image_topic: /shadow/e2e/overlay_image/compressed
+    output_compressed_jpeg_quality: 80
     output_status_topic: /shadow/e2e/overlay_status
+    model_input_image_topic: /shadow/e2e/model_input_image
+    model_input_width_px: 1152
+    model_input_height_px: 384
     output_max_edge_px: 640
     publish_status_every_frame: true
     use_tf_translation: true

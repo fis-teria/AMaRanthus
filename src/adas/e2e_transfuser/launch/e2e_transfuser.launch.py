@@ -34,6 +34,7 @@ def generate_launch_description():
                 "image_topic",
                 default_value="/sensing/camera/camera0/image_rect_color",
             ),
+            DeclareLaunchArgument("disable_image_fallback_topics", default_value="false"),
             DeclareLaunchArgument(
                 "camera_info_topic",
                 default_value="/sensing/camera/camera0/camera_info",
@@ -95,6 +96,10 @@ def generate_launch_description():
                             LaunchConfiguration("lead_force_timm_pretrained_off"), value_type=bool
                         ),
                         "image_topic": LaunchConfiguration("image_topic"),
+                        "disable_image_fallback_topics": ParameterValue(
+                            LaunchConfiguration("disable_image_fallback_topics"),
+                            value_type=bool,
+                        ),
                         "camera_info_topic": LaunchConfiguration("camera_info_topic"),
                         "pointcloud_topic": LaunchConfiguration("pointcloud_topic"),
                         "sensor_input_mode": LaunchConfiguration("sensor_input_mode"),

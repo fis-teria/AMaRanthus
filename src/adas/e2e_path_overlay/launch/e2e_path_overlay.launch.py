@@ -36,6 +36,15 @@ def generate_launch_description():
                 default_value="/shadow/e2e/overlay_image",
             ),
             DeclareLaunchArgument(
+                "output_compressed_image_topic",
+                default_value="/shadow/e2e/overlay_image/compressed",
+            ),
+            DeclareLaunchArgument("output_compressed_jpeg_quality", default_value="80"),
+            DeclareLaunchArgument(
+                "model_input_image_topic",
+                default_value="/shadow/e2e/model_input_image",
+            ),
+            DeclareLaunchArgument(
                 "use_tf_translation",
                 default_value="true",
             ),
@@ -47,6 +56,8 @@ def generate_launch_description():
                 "output_max_edge_px",
                 default_value="640",
             ),
+            DeclareLaunchArgument("model_input_width_px", default_value="1152"),
+            DeclareLaunchArgument("model_input_height_px", default_value="384"),
             Node(
                 package="e2e_path_overlay",
                 executable=LaunchConfiguration("executable"),
@@ -62,11 +73,27 @@ def generate_launch_description():
                             "yolo_detections_topic"
                         ),
                         "output_image_topic": LaunchConfiguration("output_image_topic"),
+                        "output_compressed_image_topic": LaunchConfiguration(
+                            "output_compressed_image_topic"
+                        ),
+                        "output_compressed_jpeg_quality": ParameterValue(
+                            LaunchConfiguration("output_compressed_jpeg_quality"),
+                            value_type=int,
+                        ),
+                        "model_input_image_topic": LaunchConfiguration(
+                            "model_input_image_topic"
+                        ),
                         "use_tf_translation": ParameterValue(
                             LaunchConfiguration("use_tf_translation"), value_type=bool
                         ),
                         "output_max_edge_px": ParameterValue(
                             LaunchConfiguration("output_max_edge_px"), value_type=int
+                        ),
+                        "model_input_width_px": ParameterValue(
+                            LaunchConfiguration("model_input_width_px"), value_type=int
+                        ),
+                        "model_input_height_px": ParameterValue(
+                            LaunchConfiguration("model_input_height_px"), value_type=int
                         ),
                     },
                 ],

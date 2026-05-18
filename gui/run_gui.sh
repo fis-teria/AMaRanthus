@@ -46,7 +46,10 @@ GUI_THEME="${GUI_THEME:-dark}"
 PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 ROS_CAMERA_IMAGE_TOPIC="${ROS_CAMERA_IMAGE_TOPIC:-/sensing/camera/camera0/image_rect_color}"
 ROS_CAMERA_OVERLAY_TOPIC="${ROS_CAMERA_OVERLAY_TOPIC:-/shadow/e2e/overlay_image}"
+ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC="${ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC:-/shadow/e2e/overlay_image/compressed}"
 ROS_CAMERA_OVERLAY_TIMEOUT_SEC="${ROS_CAMERA_OVERLAY_TIMEOUT_SEC:-1.0}"
+ROS_CAMERA_RAW_OVERLAY_FALLBACK="${ROS_CAMERA_RAW_OVERLAY_FALLBACK:-0}"
+ROS_CAMERA_RAW_FALLBACK="${ROS_CAMERA_RAW_FALLBACK:-0}"
 ROS_CAMERA_DISPLAY_MAX_EDGE_PX="${ROS_CAMERA_DISPLAY_MAX_EDGE_PX:-1280}"
 ROS_CAMERA_INFO_TOPIC="${ROS_CAMERA_INFO_TOPIC:-/sensing/camera/camera0/camera_info}"
 ROS_POINTCLOUD_TOPIC="${ROS_POINTCLOUD_TOPIC:-/cloud_registered}"
@@ -94,6 +97,12 @@ EXTRA_ARGS=()
 if [[ "${DISABLE_GPU_MONITOR}" == "1" ]]; then
     EXTRA_ARGS+=(--disable-gpu-monitor)
 fi
+if [[ "${ROS_CAMERA_RAW_FALLBACK}" != "1" ]]; then
+    EXTRA_ARGS+=(--no-ros-camera-raw-fallback)
+fi
+if [[ "${ROS_CAMERA_RAW_OVERLAY_FALLBACK}" != "1" ]]; then
+    EXTRA_ARGS+=(--no-ros-camera-raw-overlay-fallback)
+fi
 
 exec uv run main.py \
     --data-source "${DATA_SOURCE}" \
@@ -101,6 +110,7 @@ exec uv run main.py \
     --theme "${GUI_THEME}" \
     --ros-camera-image-topic "${ROS_CAMERA_IMAGE_TOPIC}" \
     --ros-camera-overlay-topic "${ROS_CAMERA_OVERLAY_TOPIC}" \
+    --ros-camera-compressed-overlay-topic "${ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC}" \
     --ros-camera-overlay-timeout-sec "${ROS_CAMERA_OVERLAY_TIMEOUT_SEC}" \
     --ros-camera-display-max-edge-px "${ROS_CAMERA_DISPLAY_MAX_EDGE_PX}" \
     --ros-camera-info-topic "${ROS_CAMERA_INFO_TOPIC}" \

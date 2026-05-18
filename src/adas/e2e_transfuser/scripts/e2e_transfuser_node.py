@@ -94,6 +94,8 @@ class E2ETransfuserNode(Node):
             "image_fallback_topics",
             ["/sensing/camera/camera0/image_rect_color", "/image_rect_color"],
         ).value
+        if bool(self.declare_parameter("disable_image_fallback_topics", False).value):
+            self.image_fallback_topics = []
         self.camera_info_topic = self.declare_parameter(
             "camera_info_topic", "/sensing/camera/camera0/camera_info"
         ).value
@@ -529,9 +531,12 @@ def main(args=None):
     node = E2ETransfuserNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

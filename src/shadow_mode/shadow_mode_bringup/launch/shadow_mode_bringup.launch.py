@@ -110,6 +110,7 @@ def _optional_fast_lio(context):
 def generate_launch_description():
     use_ego_estimation = LaunchConfiguration("use_ego_estimation")
     use_virtual_control = LaunchConfiguration("use_virtual_control")
+    use_route_target = LaunchConfiguration("use_route_target")
     use_metrics = LaunchConfiguration("use_metrics")
     record_shadow_bag = LaunchConfiguration("record_shadow_bag")
 
@@ -123,6 +124,7 @@ def generate_launch_description():
     virtual_output_frame = LaunchConfiguration("virtual_output_frame")
 
     shadow_mode_param_file = LaunchConfiguration("shadow_mode_param_file")
+    route_target_param_file = LaunchConfiguration("route_target_param_file")
     lane_detection_scan_topic = LaunchConfiguration("lane_detection_scan_topic")
 
     bag_output = LaunchConfiguration("bag_output")
@@ -131,6 +133,7 @@ def generate_launch_description():
     metrics_csv_path = LaunchConfiguration("metrics_csv_path")
 
     shadow_bringup_share = FindPackageShare("shadow_mode_bringup")
+    route_target_share = FindPackageShare("shadow_route_target")
 
     ego_estimation = Node(
         package="shadow_mode_ego_estimation",
@@ -183,6 +186,49 @@ def generate_launch_description():
             },
         ],
         condition=IfCondition(use_metrics),
+    )
+
+    route_target = Node(
+        package="shadow_route_target",
+        executable="shadow_route_target_node.py",
+        name="shadow_route_target",
+        output="screen",
+        parameters=[
+            route_target_param_file,
+            {
+                "output_topic": LaunchConfiguration("route_target_output_topic"),
+                "status_topic": LaunchConfiguration("route_target_status_topic"),
+                "route_command_topic": LaunchConfiguration("route_command_topic"),
+                "publish_rate_hz": ParameterValue(
+                    LaunchConfiguration("route_target_publish_rate_hz"), value_type=float
+                ),
+                "input_timeout_sec": ParameterValue(
+                    LaunchConfiguration("route_target_input_timeout_sec"), value_type=float
+                ),
+                "lookahead_distance_m": ParameterValue(
+                    LaunchConfiguration("route_target_lookahead_distance_m"), value_type=float
+                ),
+                "min_forward_distance_m": ParameterValue(
+                    LaunchConfiguration("route_target_min_forward_distance_m"), value_type=float
+                ),
+                "source_priority": LaunchConfiguration("route_target_source_priority"),
+                "gui_route_path_topic": LaunchConfiguration("gui_route_path_topic"),
+                "image_lane_path_topic": LaunchConfiguration("image_lane_path_topic"),
+                "shadow_virtual_path_topic": LaunchConfiguration("shadow_virtual_path_topic"),
+                "default_frame_id": LaunchConfiguration("route_target_default_frame_id"),
+                "default_target_x_m": ParameterValue(
+                    LaunchConfiguration("route_target_default_x_m"), value_type=float
+                ),
+                "default_target_y_m": ParameterValue(
+                    LaunchConfiguration("route_target_default_y_m"), value_type=float
+                ),
+                "publish_default_when_missing": ParameterValue(
+                    LaunchConfiguration("route_target_publish_default_when_missing"),
+                    value_type=bool,
+                ),
+            },
+        ],
+        condition=IfCondition(use_route_target),
     )
 
     shadow_bag_record = ExecuteProcess(
@@ -269,6 +315,14 @@ def generate_launch_description():
                 description="shadow_mode_virtual_control を起動します。",
             ),
             DeclareLaunchArgument(
+                "use_route_target",
+                default_value="true",
+                description=(
+                    "shadow_route_target を起動し、Shadow/GUI route path から "
+                    "/shadow/route/target_point を生成します。"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "use_metrics",
                 default_value="true",
                 description="shadow_mode_metrics を起動して ego と virtual control を比較します。",
@@ -279,6 +333,13 @@ def generate_launch_description():
                     [shadow_bringup_share, "config", "shadow_mode_bringup.param.yaml"]
                 ),
                 description="Shadow-mode ノード群の共通パラメータファイル。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_param_file",
+                default_value=PathJoinSubstitution(
+                    [route_target_share, "config", "shadow_route_target.param.yaml"]
+                ),
+                description="shadow_route_target のパラメータファイル。",
             ),
             DeclareLaunchArgument(
                 "pointcloud_topic",
@@ -332,6 +393,81 @@ def generate_launch_description():
                 "virtual_output_frame",
                 default_value="",
                 description="仮想経路出力 frame_id。空文字なら入力 scan の frame を維持します。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_output_topic",
+                default_value="/shadow/route/target_point",
+                description="E2E TransFuser に渡す route target topic。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_status_topic",
+                default_value="/shadow/route/target_status",
+                description="route target 選択状態の JSON status topic。",
+            ),
+            DeclareLaunchArgument(
+                "route_command_topic",
+                default_value="/shadow/route/command",
+                description="E2E TransFuser に渡す route command topic。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_publish_rate_hz",
+                default_value="10.0",
+                description="route target publish rate。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_input_timeout_sec",
+                default_value="0.5",
+                description="route path 入力の freshness timeout。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_lookahead_distance_m",
+                default_value="15.0",
+                description="route path から選ぶ target lookahead 距離 [m]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_min_forward_distance_m",
+                default_value="1.0",
+                description="target 候補として許容する最小前方距離 [m]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_source_priority",
+                default_value="gui_route,image_lane,shadow_virtual",
+                description="route target source 優先順。",
+            ),
+            DeclareLaunchArgument(
+                "gui_route_path_topic",
+                default_value="/shadow/route/gui_path",
+                description="GUI route IF。base_link の nav_msgs/Path を想定。",
+            ),
+            DeclareLaunchArgument(
+                "image_lane_path_topic",
+                default_value="/shadow/perception/lane_path",
+                description="画像白線/路肩検知 route IF。base_link の nav_msgs/Path を想定。",
+            ),
+            DeclareLaunchArgument(
+                "shadow_virtual_path_topic",
+                default_value="/shadow/virtual/path",
+                description="shadow_virtual_control の path 入力。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_default_frame_id",
+                default_value="base_link",
+                description="fallback target の frame_id。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_default_x_m",
+                default_value="15.0",
+                description="fallback target x [m]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_default_y_m",
+                default_value="0.0",
+                description="fallback target y [m]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_publish_default_when_missing",
+                default_value="false",
+                description="route path が無いとき固定前方 target を publish するか。",
             ),
             DeclareLaunchArgument(
                 "pointcloud_to_laserscan_param_file",
@@ -400,6 +536,7 @@ def generate_launch_description():
             OpaqueFunction(function=_optional_fast_lio),
             ego_estimation,
             virtual_control,
+            route_target,
             metrics,
             shadow_bag_record,
         ]

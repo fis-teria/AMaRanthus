@@ -1,29 +1,23 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>e2e_transfuser</name>
+  <name>camera_lane_detection</name>
   <version>0.0.1</version>
-  <description>ROS 2 adapter package for LEAD / TransFuser shadow-mode evaluation.</description>
+  <description>Camera lane and road-shoulder segmentation adapter for Shadow Mode route targets.</description>
 
   <maintainer email="you@example.com">you</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <exec_depend>adas_description</exec_depend>
-  <exec_depend>fast_lio</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>camera_lane_detection</exec_depend>
-  <exec_depend>e2e_path_overlay</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>livox_lane_detection</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>visualization_msgs</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

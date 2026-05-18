@@ -144,6 +144,12 @@ def _build_v4l2_camera_launch(context, v4l2_share):
     output_encoding = LaunchConfiguration("camera_output_encoding").perform(context).strip()
     if output_encoding:
         ros_params["output_encoding"] = output_encoding
+    time_per_frame = _resolve_time_per_frame(
+        LaunchConfiguration("camera_time_per_frame").perform(context).strip(),
+        LaunchConfiguration("camera_publish_rate").perform(context).strip(),
+    )
+    if time_per_frame is not None:
+        ros_params["time_per_frame"] = time_per_frame
 
     actions = []
     if not override_device and expected_name:
@@ -237,6 +243,28 @@ def _build_v4l2_camera_launch(context, v4l2_share):
         )
     )
     return actions
+
+
+def _resolve_time_per_frame(value: str, publish_rate: str):
+    folded = value.strip().lower()
+    if folded in ("", "profile", "config", "default"):
+        return None
+    if folded == "auto":
+        try:
+            rate = float(publish_rate)
+        except ValueError:
+            return None
+        if rate <= 0.0:
+            return None
+        return [1, max(1, int(round(rate)))]
+
+    separator = "/" if "/" in folded else ","
+    parts = [part.strip() for part in folded.split(separator) if part.strip()]
+    if len(parts) != 2:
+        raise RuntimeError(
+            "camera_time_per_frame must be 'auto', 'profile', 'NUM/DEN', or 'NUM,DEN'"
+        )
+    return [int(parts[0]), int(parts[1])]
 
 
 def generate_launch_description():
@@ -464,6 +492,14 @@ def generate_launch_description():
             DeclareLaunchArgument("use_intra_process", default_value="false"),
             DeclareLaunchArgument("use_sensor_data_qos", default_value="true"),
             DeclareLaunchArgument("camera_publish_rate", default_value="10.0"),
+            DeclareLaunchArgument(
+                "camera_time_per_frame",
+                default_value="auto",
+                description=(
+                    "V4L2 capture interval. 'auto' matches camera_publish_rate, "
+                    "'profile' keeps the YAML value, or use NUM/DEN."
+                ),
+            ),
             DeclareLaunchArgument(
                 "camera_output_encoding",
                 default_value="rgb8",

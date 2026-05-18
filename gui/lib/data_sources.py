@@ -1,11 +1,13 @@
 import json
 import math
+import os
 import random
 import struct
+import threading
 import time
 from typing import Callable, Optional
 
-from PyQt5.QtCore import QPoint, QObject, QPointF, Qt, QTimer
+from PyQt5.QtCore import QPoint, QObject, QPointF, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPolygon
 
 from .models import CameraFrame, DetectedObject, PointCloudPoint, ShadowMetrics, UiState
@@ -203,12 +205,19 @@ class DemoDataSource(QObject):
 
 
 class Ros2DataSource(QObject):
+    _state_signal = pyqtSignal(object)
+    _live_signal = pyqtSignal(str)
+    _log_signal = pyqtSignal(str, str)
+
     def __init__(
         self,
         *,
         camera_image_topic: str,
         camera_overlay_topic: str,
+        camera_compressed_overlay_topic: str,
         camera_overlay_timeout_sec: float,
+        camera_raw_overlay_fallback: bool,
+        camera_raw_fallback: bool,
         camera_display_max_edge_px: int,
         camera_info_topic: str,
         pointcloud_topic: str,
@@ -240,7 +249,10 @@ class Ros2DataSource(QObject):
         self._callback: Optional[UiStateCallback] = None
         self._camera_image_topic = camera_image_topic
         self._camera_overlay_topic = camera_overlay_topic
+        self._camera_compressed_overlay_topic = camera_compressed_overlay_topic
         self._camera_overlay_timeout_sec = max(0.0, float(camera_overlay_timeout_sec))
+        self._camera_raw_overlay_fallback = bool(camera_raw_overlay_fallback)
+        self._camera_raw_fallback = bool(camera_raw_fallback)
         self._camera_display_max_edge_px = max(0, int(camera_display_max_edge_px))
         self._camera_info_topic = camera_info_topic
         self._pointcloud_topic = pointcloud_topic
@@ -269,6 +281,23 @@ class Ros2DataSource(QObject):
         self._shadow_intervention_score_topic = shadow_intervention_score_topic
         self._shadow_summary_topic = shadow_summary_topic
         self._timer: Optional[QTimer] = None
+        self._spin_thread: Optional[threading.Thread] = None
+        self._pointcloud_thread: Optional[threading.Thread] = None
+        self._stop_spin = threading.Event()
+        self._stop_pointcloud = threading.Event()
+        self._ros_spin_interval_ms = max(
+            1, int(os.environ.get("ROS_SPIN_INTERVAL_MS", "5"))
+        )
+        self._ros_spin_max_callbacks = max(
+            1, int(os.environ.get("ROS_SPIN_MAX_CALLBACKS", "8"))
+        )
+        self._ros_spin_budget_sec = max(
+            0.001, float(os.environ.get("ROS_SPIN_BUDGET_SEC", "0.001"))
+        )
+        self._ui_min_emit_interval_sec = max(
+            0.0, float(os.environ.get("ROS_UI_MIN_EMIT_INTERVAL_SEC", "0.05"))
+        )
+        self._last_ui_emit_at = 0.0
         self._node = None
         self._rclpy = None
         self._point_cloud2 = None
@@ -277,8 +306,14 @@ class Ros2DataSource(QObject):
         self._has_live_data = False
         self._live_fields: set[str] = set()
         self._pointcloud_messages = 0
+        self._pointcloud_processed_messages = 0
         self._pointcloud_parse_errors = 0
         self._last_pointcloud_update_at = 0.0
+        self._latest_pointcloud_msg = None
+        self._latest_pointcloud_seq = 0
+        self._processed_pointcloud_seq = 0
+        self._pointcloud_view_enabled = False
+        self._pointcloud_lock = threading.Lock()
         self._camera_messages = 0
         self._camera_parse_errors = 0
         self._camera_overlay_messages = 0
@@ -294,12 +329,23 @@ class Ros2DataSource(QObject):
         self._mode = "--"
         self._gps_status = "--"
         self._shadow_metrics = ShadowMetrics()
+        self._state_signal.connect(self._dispatch_state)
+        self._live_signal.connect(self._dispatch_live_data)
+        self._log_signal.connect(self._dispatch_log)
 
     def set_live_callback(self, callback: Optional[LiveDataCallback]) -> None:
         self._live_callback = callback
 
     def set_log_callback(self, callback: Optional[LogCallback]) -> None:
         self._log_callback = callback
+
+    def set_pointcloud_view_enabled(self, enabled: bool) -> None:
+        was_enabled = self._pointcloud_view_enabled
+        self._pointcloud_view_enabled = bool(enabled)
+        if self._pointcloud_view_enabled and not was_enabled:
+            self._log("INFO", "PointCloud viewer parsing enabled")
+        elif was_enabled and not self._pointcloud_view_enabled:
+            self._log("INFO", "PointCloud viewer parsing paused")
 
     def start(self, callback: UiStateCallback) -> None:
         self._callback = callback
@@ -313,7 +359,7 @@ class Ros2DataSource(QObject):
                 QoSProfile,
                 ReliabilityPolicy,
             )
-            from sensor_msgs.msg import CameraInfo, Image, LaserScan, PointCloud2
+            from sensor_msgs.msg import CameraInfo, CompressedImage, Image, LaserScan, PointCloud2
             from sensor_msgs_py import point_cloud2
             from std_msgs.msg import Float32, String
         except ImportError as exc:
@@ -353,18 +399,27 @@ class Ros2DataSource(QObject):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
-        node.create_subscription(
-            Image,
-            self._camera_image_topic,
-            self._on_camera_image,
-            camera_qos,
-        )
-        node.create_subscription(
-            Image,
-            self._camera_overlay_topic,
-            self._on_camera_overlay_image,
-            camera_qos,
-        )
+        if self._camera_raw_fallback and self._camera_image_topic:
+            node.create_subscription(
+                Image,
+                self._camera_image_topic,
+                self._on_camera_image,
+                camera_qos,
+            )
+        if self._camera_compressed_overlay_topic:
+            node.create_subscription(
+                CompressedImage,
+                self._camera_compressed_overlay_topic,
+                self._on_camera_compressed_overlay_image,
+                camera_qos,
+            )
+        if self._camera_raw_overlay_fallback or not self._camera_compressed_overlay_topic:
+            node.create_subscription(
+                Image,
+                self._camera_overlay_topic,
+                self._on_camera_overlay_image,
+                camera_qos,
+            )
         node.create_subscription(
             CameraInfo,
             self._camera_info_topic,
@@ -446,26 +501,56 @@ class Ros2DataSource(QObject):
         node.create_subscription(String, self._shadow_summary_topic, self._on_shadow_summary, 10)
 
         self._node = {"node": node, "executor": executor}
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._spin_once)
-        self._timer.start(30)
-        self._log("INFO", f"Subscribed camera image topic: {self._camera_image_topic}")
-        self._log(
-            "INFO",
-            (
-                "Subscribed camera overlay topic: "
-                f"{self._camera_overlay_topic} "
-                f"(preferred for {self._camera_overlay_timeout_sec:.1f}s)"
-            ),
+        self._stop_spin.clear()
+        self._spin_thread = threading.Thread(
+            target=self._spin_loop,
+            name="amaranthus-ros2-gui-spin",
+            daemon=True,
         )
+        self._spin_thread.start()
+        self._stop_pointcloud.clear()
+        self._pointcloud_thread = threading.Thread(
+            target=self._pointcloud_loop,
+            name="amaranthus-ros2-gui-pointcloud",
+            daemon=True,
+        )
+        self._pointcloud_thread.start()
+        if self._camera_raw_fallback and self._camera_image_topic:
+            self._log("INFO", f"Subscribed camera image topic: {self._camera_image_topic}")
+        else:
+            self._log("INFO", "Raw camera image fallback subscription disabled")
+        if self._camera_compressed_overlay_topic:
+            self._log(
+                "INFO",
+                f"Subscribed compressed camera overlay topic: {self._camera_compressed_overlay_topic}",
+            )
+        if self._camera_raw_overlay_fallback or not self._camera_compressed_overlay_topic:
+            self._log(
+                "INFO",
+                (
+                    "Subscribed camera overlay topic: "
+                    f"{self._camera_overlay_topic} "
+                    f"(preferred for {self._camera_overlay_timeout_sec:.1f}s)"
+                ),
+            )
+        else:
+            self._log("INFO", "Raw camera overlay fallback subscription disabled")
         self._log("INFO", f"Subscribed camera info topic: {self._camera_info_topic}")
         self._log("INFO", f"Subscribed PointCloud2 topic: {self._pointcloud_topic}")
         self._log("INFO", f"Subscribed LaserScan topics: {self._scan_topic}, {self._lane_topic}")
-        self._emit_state()
+        self._emit_state(force=True)
 
     def stop(self) -> None:
         if self._timer is not None:
             self._timer.stop()
+        self._stop_spin.set()
+        self._stop_pointcloud.set()
+        if self._spin_thread is not None and self._spin_thread.is_alive():
+            self._spin_thread.join(timeout=1.0)
+        self._spin_thread = None
+        if self._pointcloud_thread is not None and self._pointcloud_thread.is_alive():
+            self._pointcloud_thread.join(timeout=1.0)
+        self._pointcloud_thread = None
 
         if not self._node or self._rclpy is None:
             return
@@ -481,6 +566,45 @@ class Ros2DataSource(QObject):
         self._node = None
         self._rclpy = None
 
+    def _spin_loop(self) -> None:
+        while not self._stop_spin.is_set():
+            if not self._node or self._rclpy is None:
+                return
+            if not self._rclpy.ok():
+                return
+            try:
+                self._node["executor"].spin_once(timeout_sec=self._ros_spin_budget_sec)
+            except Exception as exc:
+                if self._stop_spin.is_set() or self._rclpy is None or not self._rclpy.ok():
+                    return
+                self._log("ERROR", f"ROS2 spin failed: {type(exc).__name__}: {exc}")
+
+    def _pointcloud_loop(self) -> None:
+        while not self._stop_pointcloud.is_set():
+            wait_sec = self._pointcloud_min_update_interval_sec
+            if wait_sec <= 0.0:
+                wait_sec = 0.05
+            if self._stop_pointcloud.wait(wait_sec):
+                return
+            if not self._pointcloud_view_enabled:
+                continue
+
+            now = time.monotonic()
+            if (
+                self._last_pointcloud_update_at > 0.0
+                and now - self._last_pointcloud_update_at
+                < self._pointcloud_min_update_interval_sec
+            ):
+                continue
+
+            with self._pointcloud_lock:
+                msg = self._latest_pointcloud_msg
+                seq = self._latest_pointcloud_seq
+            if msg is None or seq == self._processed_pointcloud_seq:
+                continue
+
+            self._process_pointcloud_message(msg, seq, now)
+
     def _spin_once(self) -> None:
         if not self._node or self._rclpy is None:
             return
@@ -489,7 +613,11 @@ class Ros2DataSource(QObject):
                 self._timer.stop()
             return
         try:
-            self._node["executor"].spin_once(timeout_sec=0.0)
+            deadline = time.monotonic() + self._ros_spin_budget_sec
+            for _ in range(self._ros_spin_max_callbacks):
+                self._node["executor"].spin_once(timeout_sec=0.0)
+                if time.monotonic() >= deadline:
+                    break
         except Exception as exc:
             if self._rclpy is not None and not self._rclpy.ok():
                 if self._timer is not None:
@@ -497,11 +625,19 @@ class Ros2DataSource(QObject):
                 return
             self._log("ERROR", f"ROS2 spin failed: {type(exc).__name__}: {exc}")
 
-    def _emit_state(self) -> None:
+    def _emit_state(self, *, force: bool = False) -> None:
         if self._callback is None:
             return
+        now = time.monotonic()
+        if (
+            not force
+            and self._ui_min_emit_interval_sec > 0.0
+            and now - self._last_ui_emit_at < self._ui_min_emit_interval_sec
+        ):
+            return
+        self._last_ui_emit_at = now
 
-        self._callback(
+        self._state_signal.emit(
             UiState(
                 scan_points=self._scan_points,
                 lane_points=self._lane_points,
@@ -523,7 +659,21 @@ class Ros2DataSource(QObject):
             self._live_fields.add(field_name)
             self._log("INFO", f"ROS2 topic became live: {field_name}")
         if self._live_callback is not None:
+            self._live_signal.emit(field_name)
+
+    def _dispatch_state(self, state: UiState) -> None:
+        if self._callback is not None:
+            self._callback(state)
+
+    def _dispatch_live_data(self, field_name: str) -> None:
+        if self._live_callback is not None:
             self._live_callback(field_name)
+
+    def _dispatch_log(self, level: str, message: str) -> None:
+        if self._log_callback is not None:
+            self._log_callback(level, message)
+        else:
+            print(f"[{level}] {message}")
 
     def _on_scan(self, msg) -> None:
         self._mark_live_data("scan")
@@ -555,17 +705,10 @@ class Ros2DataSource(QObject):
         self._mark_live_data("pointcloud")
         self._pointcloud_messages += 1
 
-        now = time.monotonic()
-        if (
-            self._pointcloud_messages > 1
-            and now - self._last_pointcloud_update_at
-            < self._pointcloud_min_update_interval_sec
-        ):
-            return
+        with self._pointcloud_lock:
+            self._latest_pointcloud_msg = msg
+            self._latest_pointcloud_seq += 1
 
-        max_points = self._pointcloud_max_points
-        total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
-        stride = max(1, math.ceil(total_points / max_points))
         if self._pointcloud_messages == 1:
             fields = ", ".join(getattr(field, "name", "?") for field in getattr(msg, "fields", []))
             self._log(
@@ -579,6 +722,11 @@ class Ros2DataSource(QObject):
                 ),
             )
 
+    def _process_pointcloud_message(self, msg, seq: int, now: float) -> None:
+        max_points = self._pointcloud_max_points
+        total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
+        stride = max(1, math.ceil(total_points / max_points))
+
         try:
             points = self._sample_pointcloud(msg, stride=stride, max_points=max_points)
         except Exception as exc:
@@ -589,13 +737,19 @@ class Ros2DataSource(QObject):
             )
             points = []
 
-        self._pointcloud_points = points
+        with self._pointcloud_lock:
+            self._pointcloud_points = points
+            self._processed_pointcloud_seq = seq
         self._last_pointcloud_update_at = now
-        if self._pointcloud_messages == 1 or self._pointcloud_messages % 100 == 0:
+        self._pointcloud_processed_messages += 1
+        if (
+            self._pointcloud_processed_messages == 1
+            or self._pointcloud_processed_messages % 100 == 0
+        ):
             self._log(
                 "INFO",
                 (
-                    f"PointCloud2 parsed frame {self._pointcloud_messages}: "
+                    f"PointCloud2 parsed frame {self._pointcloud_processed_messages}: "
                     f"kept {len(points)} points, stride={stride}, max_points={max_points}"
                 ),
             )
@@ -708,10 +862,7 @@ class Ros2DataSource(QObject):
             return None, None, None
 
     def _log(self, level: str, message: str) -> None:
-        if self._log_callback is not None:
-            self._log_callback(level, message)
-        else:
-            print(f"[{level}] {message}")
+        self._log_signal.emit(level, message)
 
     def _on_camera_image(self, msg) -> None:
         self._mark_live_data("camera")
@@ -735,6 +886,16 @@ class Ros2DataSource(QObject):
             count=self._camera_overlay_messages,
             source_label="Camera overlay",
             is_overlay=True,
+        )
+
+    def _on_camera_compressed_overlay_image(self, msg) -> None:
+        self._mark_live_data("camera")
+        self._camera_overlay_messages += 1
+        self._store_compressed_camera_frame(
+            msg,
+            topic=self._camera_compressed_overlay_topic,
+            count=self._camera_overlay_messages,
+            source_label="Camera overlay compressed",
         )
 
     def _camera_overlay_is_fresh(self) -> bool:
@@ -790,6 +951,55 @@ class Ros2DataSource(QObject):
                     f"{source_label} frame {count}: "
                     f"{msg.width}x{msg.height}->{image.width()}x{image.height()} "
                     f"encoding={msg.encoding} step={msg.step}"
+                ),
+            )
+        self._emit_state()
+
+    def _store_compressed_camera_frame(
+        self,
+        msg,
+        *,
+        topic: str,
+        count: int,
+        source_label: str,
+    ) -> None:
+        try:
+            image = QImage.fromData(bytes(msg.data))
+            if image.isNull():
+                raise ValueError(f"unsupported compressed image format: {msg.format}")
+        except Exception as exc:
+            self._camera_overlay_parse_errors += 1
+            self._log(
+                "ERROR",
+                (
+                    f"{source_label} parse failed "
+                    f"({self._camera_overlay_parse_errors}): {type(exc).__name__}: {exc}"
+                ),
+            )
+            return
+
+        image = self._scale_camera_image(image)
+        stamp = getattr(msg.header, "stamp", None)
+        stamp_sec = 0.0
+        if stamp is not None:
+            stamp_sec = float(getattr(stamp, "sec", 0)) + float(getattr(stamp, "nanosec", 0)) * 1e-9
+        self._camera_frame = CameraFrame(
+            image=image,
+            width=int(image.width()),
+            height=int(image.height()),
+            encoding=f"compressed:{msg.format}",
+            frame_id=str(getattr(msg.header, "frame_id", "")),
+            stamp_sec=stamp_sec,
+            topic=topic,
+        )
+        self._camera_overlay_received_at = time.monotonic()
+        if count == 1 or count % 100 == 0:
+            self._log(
+                "INFO",
+                (
+                    f"{source_label} frame {count}: "
+                    f"{image.width()}x{image.height()} encoding={msg.format} "
+                    f"bytes={len(msg.data)}"
                 ),
             )
         self._emit_state()
