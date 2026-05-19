@@ -101,7 +101,7 @@ class E2EPathOverlayNode(Node):
         ).value
         self.path_topic = self.declare_parameter("path_topic", "/shadow/e2e/path").value
         self.yolo_detections_topic = self.declare_parameter(
-            "yolo_detections_topic", "/yolo/tracking"
+            "yolo_detections_topic", "/yolo/detections"
         ).value
         self.output_image_topic = self.declare_parameter(
             "output_image_topic", "/shadow/e2e/overlay_image"

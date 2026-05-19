@@ -154,7 +154,7 @@ public:
     camera_info_topic_ = declare_parameter<std::string>(
       "camera_info_topic", "/sensing/camera/camera0/camera_info");
     path_topic_ = declare_parameter<std::string>("path_topic", "/shadow/e2e/path");
-    yolo_detections_topic_ = declare_parameter<std::string>("yolo_detections_topic", "/yolo/tracking");
+    yolo_detections_topic_ = declare_parameter<std::string>("yolo_detections_topic", "/yolo/detections");
     output_image_topic_ = declare_parameter<std::string>("output_image_topic", "/shadow/e2e/overlay_image");
     output_compressed_image_topic_ = declare_parameter<std::string>(
       "output_compressed_image_topic", "/shadow/e2e/overlay_image/compressed");
@@ -181,6 +181,8 @@ public:
     stale_path_timeout_sec_ = declare_parameter<double>("stale_path_timeout_sec", 1.0);
     stale_yolo_timeout_sec_ = declare_parameter<double>("stale_yolo_timeout_sec", 1.0);
     stale_camera_info_timeout_sec_ = declare_parameter<double>("stale_camera_info_timeout_sec", 2.0);
+    stale_image_timeout_sec_ = declare_parameter<double>("stale_image_timeout_sec", 0.5);
+    process_rate_hz_ = std::max(0.1, declare_parameter<double>("process_rate_hz", 10.0));
     output_max_edge_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("output_max_edge_px", 640)));
     model_input_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_width_px", 1152)));
     model_input_height_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_height_px", 384)));
@@ -222,12 +224,16 @@ public:
         model_input_image_topic_, rclcpp::SensorDataQoS());
     }
     status_pub_ = create_publisher<std_msgs::msg::String>(output_status_topic_, 10);
+    const auto process_period = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(1.0 / process_rate_hz_));
+    process_timer_ = create_wall_timer(
+      process_period, std::bind(&E2EPathOverlayNode::process_timer_callback, this));
 
     RCLCPP_INFO(
       get_logger(),
-      "e2e_path_overlay C++ started images=%zu path=%s yolo=%s output_max_edge_px=%d compressed=%s model_input=%s %dx%d",
-      image_topics_.size(), path_topic_.c_str(), yolo_detections_topic_.c_str(), output_max_edge_px_,
-      output_compressed_image_topic_.c_str(), model_input_image_topic_.c_str(),
+      "e2e_path_overlay C++ started images=%zu path=%s yolo=%s rate=%.2fHz output_max_edge_px=%d compressed=%s model_input=%s %dx%d",
+      image_topics_.size(), path_topic_.c_str(), yolo_detections_topic_.c_str(), process_rate_hz_,
+      output_max_edge_px_, output_compressed_image_topic_.c_str(), model_input_image_topic_.c_str(),
       model_input_width_px_, model_input_height_px_);
   }
 
@@ -252,8 +258,32 @@ private:
 
   void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr msg)
   {
-    const auto callback_start = std::chrono::steady_clock::now();
+    latest_image_ = msg;
+    latest_image_received_at_ = now();
+  }
+
+  void process_timer_callback()
+  {
+    const auto msg = latest_image_;
+    if (!msg) {
+      return;
+    }
     const auto current_time = now();
+    if (!is_fresh(latest_image_received_at_, current_time, stale_image_timeout_sec_)) {
+      OverlayTimingMs timing;
+      publish_status(
+        current_time, msg, 0, 0, 0, "missing_or_stale:image",
+        std::nullopt, 0, 0, timing);
+      return;
+    }
+    process_image(msg, current_time);
+  }
+
+  void process_image(
+    const sensor_msgs::msg::Image::ConstSharedPtr & msg,
+    const rclcpp::Time & current_time)
+  {
+    const auto callback_start = std::chrono::steady_clock::now();
     const auto overlay = make_overlay_image(msg);
     const auto after_overlay = std::chrono::steady_clock::now();
     if (!overlay) {
@@ -878,6 +908,8 @@ private:
   double stale_path_timeout_sec_{1.0};
   double stale_yolo_timeout_sec_{1.0};
   double stale_camera_info_timeout_sec_{2.0};
+  double stale_image_timeout_sec_{0.5};
+  double process_rate_hz_{10.0};
   int output_max_edge_px_{640};
   int model_input_width_px_{1152};
   int model_input_height_px_{384};
@@ -897,10 +929,13 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_overlay_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr model_input_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::TimerBase::SharedPtr process_timer_;
 
+  sensor_msgs::msg::Image::ConstSharedPtr latest_image_;
   sensor_msgs::msg::CameraInfo::SharedPtr latest_camera_info_;
   nav_msgs::msg::Path::SharedPtr latest_path_;
   yolo_msgs::msg::DetectionArray::SharedPtr latest_yolo_detections_;
+  std::optional<rclcpp::Time> latest_image_received_at_;
   std::optional<rclcpp::Time> latest_camera_info_received_at_;
   std::optional<rclcpp::Time> latest_path_received_at_;
   std::optional<rclcpp::Time> latest_yolo_received_at_;

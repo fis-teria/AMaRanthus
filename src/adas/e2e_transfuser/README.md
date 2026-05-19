@@ -6,7 +6,7 @@
 
 `sensor_input_mode` は `auto` / `camera_lidar` / `camera_only` を選べます。デフォルトの `auto` では `/cloud_registered` が `input_timeout_sec` より古くなったときに camera-only として入力待ちを継続し、`/shadow/e2e/status` の `active_sensor_input_mode` と `missing_optional_inputs` で現在の状態を確認できます。camera-only では LiDAR 由来の odometry や route target も任意入力に落とし、画像と camera_info だけで mock E2E 出力を維持します。
 
-`shadow_mode_e2e_transfuser.launch.py` はデフォルトで YOLO も起動します。`/yolo/tracking` を `e2e_path_overlay` が購読し、overlay 画像へ検出bboxを重ねます。debug image node は重さを避けるため `yolo_use_debug:=false` にしています。YOLO は既定で `Data/venvs/yolo_ros_cuda` の CUDA 対応 Torch と `Data/models/yolo/yolo11n.pt` を使い、`yolo_device:=cuda:0` で起動します。GPU を使わない場合は `yolo_device:=cpu` を指定してください。
+`shadow_mode_e2e_transfuser.launch.py` はデフォルトで YOLO も起動します。`/yolo/detections` を `e2e_path_overlay` が購読し、overlay 画像へ検出bboxを重ねます。tracking node は追加のフル解像度画像購読を避けるため既定で `yolo_use_tracking:=false` にしています。debug image node は重さを避けるため `yolo_use_debug:=false` にしています。YOLO は既定で `Data/venvs/yolo_ros_cuda` の CUDA 対応 Torch と `Data/models/yolo/yolo11n.pt` を使い、`yolo_device:=cuda:0` で起動します。GPU を使わない場合は `yolo_device:=cpu` を指定してください。
 
 `shadow_mode_e2e_transfuser.launch.py` は E2E 10Hz 経路を優先するため、デフォルトでは Livox lane detection を起動しません。lane detection を試す場合は `use_livox_lane_detection:=true` を指定してください。Livox driver は `camera_lidar_bringup` 側で起動するため、E2E から呼び出す `livox_lane_detection_live.launch.py` では `launch_livox_driver:=false` に固定しています。lane detection は既定で scan-only、`lane_detection_max_process_rate_hz:=5.0`、`lane_detection_device:=cuda:0` です。CUDA が使えない libtorch/runtime では CPU に fallback します。`use_adas_bringup:=true` でフル ADAS bringup 側から lane detection を起動する場合も、二重起動を避けるため `use_livox_lane_detection:=false` を併用してください。
 

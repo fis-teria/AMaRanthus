@@ -9,7 +9,8 @@ ROS_APT_CODENAME="${ROS_APT_CODENAME:-jammy}"
 LIBREALSENSE_VERSION="${LIBREALSENSE_VERSION:-v2.55.1}"
 LIVOX_SDK2_VERSION="${LIVOX_SDK2_VERSION:-v1.2.4}"
 LIBTORCH_VERSION="${LIBTORCH_VERSION:-2.4.1}"
-LIBTORCH_VARIANT="${LIBTORCH_VARIANT:-cpu}"
+LIBTORCH_VARIANT="${LIBTORCH_VARIANT:-cu121}"
+LIBTORCH_INSTALL_DIR="${LIBTORCH_INSTALL_DIR:-/opt/libtorch}"
 ACADOS_VERSION="${ACADOS_VERSION:-v0.5.3}"
 ACADOS_TERA_RENDERER_VERSION="${ACADOS_TERA_RENDERER_VERSION:-v0.2.0}"
 CUDA_VERSION="${CUDA_VERSION:-12.8}"
@@ -47,7 +48,8 @@ Options:
   --with-yolo-cuda-venv            Install CUDA-enabled Python deps for yolo_ros under Data/venvs.
                                    Also installs the lightweight LEAD inference deps used by e2e_transfuser.
   --libtorch-variant <cpu|cu118|cu121>
-                                   Select the libtorch package variant to install.
+                                   Select the libtorch package variant to install. Default: cu121.
+  --libtorch-install-dir <path>    Install libtorch into this directory. Default: /opt/libtorch.
   --skip-libtorch                  Skip libtorch installation.
   --skip-acados                    Skip acados source build.
   --skip-librealsense              Skip librealsense source build.
@@ -56,7 +58,8 @@ Options:
 
 Environment variables:
   ROS_DISTRO, ROS_APT_CODENAME, LIBREALSENSE_VERSION, LIVOX_SDK2_VERSION,
-  LIBTORCH_VERSION, LIBTORCH_VARIANT, ACADOS_VERSION, ACADOS_TERA_RENDERER_VERSION,
+  LIBTORCH_VERSION, LIBTORCH_VARIANT, LIBTORCH_INSTALL_DIR,
+  ACADOS_VERSION, ACADOS_TERA_RENDERER_VERSION,
   CUDA_VERSION,
   INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
   INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
@@ -99,6 +102,10 @@ while [[ $# -gt 0 ]]; do
     --libtorch-variant)
       shift
       LIBTORCH_VARIANT="${1:-}"
+      ;;
+    --libtorch-install-dir)
+      shift
+      LIBTORCH_INSTALL_DIR="${1:-}"
       ;;
     --skip-libtorch)
       SKIP_LIBTORCH=1
@@ -611,6 +618,11 @@ PY
 install_libtorch() {
   local archive=""
   local download_url=""
+  local install_dir="${LIBTORCH_INSTALL_DIR}"
+  local install_parent=""
+  local install_parent_parent=""
+  local use_sudo=0
+  local tmp_extract=""
 
   if [[ "${SKIP_LIBTORCH}" == "1" ]]; then
     return
@@ -634,13 +646,36 @@ install_libtorch() {
 
   download_url="https://download.pytorch.org/libtorch/${LIBTORCH_VARIANT}/${archive}"
 
-  log "Installing libtorch ${LIBTORCH_VERSION} (${LIBTORCH_VARIANT}) into /opt/libtorch"
+  install_dir="$(readlink -m "${install_dir}")"
+  install_parent="$(dirname "${install_dir}")"
+  install_parent_parent="$(dirname "${install_parent}")"
+
+  if [[ -d "${install_parent}" ]]; then
+    if [[ ! -w "${install_parent}" ]]; then
+      use_sudo=1
+    fi
+  elif [[ ! -d "${install_parent_parent}" || ! -w "${install_parent_parent}" ]]; then
+    use_sudo=1
+  fi
+
+  tmp_extract="$(mktemp -d)"
+
+  log "Installing libtorch ${LIBTORCH_VERSION} (${LIBTORCH_VARIANT}) into ${install_dir}"
   wget -O /tmp/libtorch.zip "${download_url}"
-  ${SUDO} rm -rf /opt/libtorch
-  ${SUDO} unzip -q /tmp/libtorch.zip -d /opt
+  unzip -q /tmp/libtorch.zip -d "${tmp_extract}"
+  if [[ "${use_sudo}" == "1" ]]; then
+    ${SUDO} mkdir -p "${install_parent}"
+    ${SUDO} rm -rf "${install_dir}"
+    ${SUDO} mv "${tmp_extract}/libtorch" "${install_dir}"
+  else
+    mkdir -p "${install_parent}"
+    rm -rf "${install_dir}"
+    mv "${tmp_extract}/libtorch" "${install_dir}"
+  fi
+  rm -rf "${tmp_extract}"
   rm -f /tmp/libtorch.zip
 
-  if [[ ! -f /opt/libtorch/share/cmake/Torch/TorchConfig.cmake ]]; then
+  if [[ ! -f "${install_dir}/share/cmake/Torch/TorchConfig.cmake" ]]; then
     echo "[ERROR] libtorch installation completed, but TorchConfig.cmake was not found" >&2
     exit 1
   fi

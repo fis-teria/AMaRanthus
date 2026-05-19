@@ -339,7 +339,9 @@ def generate_launch_description():
         "model_type": "YOLO",
         "model": LaunchConfiguration("yolo_model"),
         "device": LaunchConfiguration("yolo_device"),
-        "fuse_model": False,
+        "fuse_model": ParameterValue(
+            LaunchConfiguration("yolo_fuse_model"), value_type=bool
+        ),
         "yolo_encoding": LaunchConfiguration("yolo_encoding"),
         "enable": ParameterValue(LaunchConfiguration("yolo_enable"), value_type=bool),
         "threshold": ParameterValue(
@@ -352,8 +354,8 @@ def generate_launch_description():
         "imgsz_width": ParameterValue(
             LaunchConfiguration("yolo_imgsz_width"), value_type=int
         ),
-        "half": False,
-        "max_det": 300,
+        "half": ParameterValue(LaunchConfiguration("yolo_half"), value_type=bool),
+        "max_det": ParameterValue(LaunchConfiguration("yolo_max_det"), value_type=int),
         "augment": False,
         "agnostic_nms": False,
         "retina_masks": False,
@@ -535,13 +537,16 @@ def generate_launch_description():
             DeclareLaunchArgument("yolo_tracker", default_value="bytetrack.yaml"),
             DeclareLaunchArgument("yolo_imgsz_height", default_value="640"),
             DeclareLaunchArgument("yolo_imgsz_width", default_value="640"),
+            DeclareLaunchArgument("yolo_half", default_value="false"),
+            DeclareLaunchArgument("yolo_fuse_model", default_value="false"),
+            DeclareLaunchArgument("yolo_max_det", default_value="300"),
             DeclareLaunchArgument(
                 "yolo_input_image_topic",
                 default_value="/sensing/camera/camera0/image_rect_color",
             ),
             DeclareLaunchArgument("yolo_image_reliability", default_value="2"),
             DeclareLaunchArgument("yolo_namespace", default_value="yolo"),
-            DeclareLaunchArgument("yolo_use_tracking", default_value="true"),
+            DeclareLaunchArgument("yolo_use_tracking", default_value="false"),
             DeclareLaunchArgument("yolo_use_debug", default_value="true"),
             DeclareLaunchArgument("yolo_python_site", default_value=yolo_venv_site),
             DeclareLaunchArgument("yolo_torch_lib", default_value=yolo_torch_lib),

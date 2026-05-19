@@ -29,7 +29,7 @@ def generate_launch_description():
             DeclareLaunchArgument("path_topic", default_value="/shadow/e2e/path"),
             DeclareLaunchArgument(
                 "yolo_detections_topic",
-                default_value="/yolo/tracking",
+                default_value="/yolo/detections",
             ),
             DeclareLaunchArgument(
                 "output_image_topic",
@@ -56,6 +56,8 @@ def generate_launch_description():
                 "output_max_edge_px",
                 default_value="640",
             ),
+            DeclareLaunchArgument("process_rate_hz", default_value="10.0"),
+            DeclareLaunchArgument("stale_image_timeout_sec", default_value="0.5"),
             DeclareLaunchArgument("model_input_width_px", default_value="1152"),
             DeclareLaunchArgument("model_input_height_px", default_value="384"),
             Node(
@@ -88,6 +90,13 @@ def generate_launch_description():
                         ),
                         "output_max_edge_px": ParameterValue(
                             LaunchConfiguration("output_max_edge_px"), value_type=int
+                        ),
+                        "process_rate_hz": ParameterValue(
+                            LaunchConfiguration("process_rate_hz"), value_type=float
+                        ),
+                        "stale_image_timeout_sec": ParameterValue(
+                            LaunchConfiguration("stale_image_timeout_sec"),
+                            value_type=float,
                         ),
                         "model_input_width_px": ParameterValue(
                             LaunchConfiguration("model_input_width_px"), value_type=int

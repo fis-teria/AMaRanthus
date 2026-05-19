@@ -40,14 +40,27 @@ if [[ -f "${_amaranthus_repo_root}/install/setup.bash" ]]; then
   unset _amaranthus_had_nounset
 fi
 
-export Torch_DIR=/opt/libtorch/share/cmake/Torch
+if [[ -n "${LIBTORCH_ROOT:-}" ]]; then
+  _amaranthus_libtorch_root="${LIBTORCH_ROOT}"
+elif [[ -d "${_amaranthus_repo_root}/../Data/libtorch" ]]; then
+  _amaranthus_libtorch_root="${_amaranthus_repo_root}/../Data/libtorch"
+elif [[ -d "${_amaranthus_repo_root}/Data/libtorch" ]]; then
+  _amaranthus_libtorch_root="${_amaranthus_repo_root}/Data/libtorch"
+else
+  _amaranthus_libtorch_root="/opt/libtorch"
+fi
+export LIBTORCH_ROOT="${_amaranthus_libtorch_root}"
+export Torch_DIR="${LIBTORCH_ROOT}/share/cmake/Torch"
 if [[ -d /opt/acados ]]; then
   export ACADOS_SOURCE_DIR=/opt/acados
-  export CMAKE_PREFIX_PATH=/opt/acados:/opt/libtorch:/usr/local:${CMAKE_PREFIX_PATH:-}
-  export LD_LIBRARY_PATH=/opt/acados/lib:/opt/libtorch/lib:/usr/local/cuda/lib64:/usr/local/lib:${LD_LIBRARY_PATH:-}
+  export CMAKE_PREFIX_PATH=/opt/acados:${LIBTORCH_ROOT}:/usr/local:${CMAKE_PREFIX_PATH:-}
+  export LD_LIBRARY_PATH=/opt/acados/lib:/usr/local/cuda/lib64:/usr/local/lib:${LD_LIBRARY_PATH:-}
 else
-  export CMAKE_PREFIX_PATH=/opt/libtorch:/usr/local:${CMAKE_PREFIX_PATH:-}
-  export LD_LIBRARY_PATH=/opt/libtorch/lib:/usr/local/cuda/lib64:/usr/local/lib:${LD_LIBRARY_PATH:-}
+  export CMAKE_PREFIX_PATH=${LIBTORCH_ROOT}:/usr/local:${CMAKE_PREFIX_PATH:-}
+  export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib:${LD_LIBRARY_PATH:-}
+fi
+if [[ "${AMARANTHUS_ENABLE_GLOBAL_LIBTORCH_LD_LIBRARY_PATH:-0}" == "1" ]]; then
+  export LD_LIBRARY_PATH=${LIBTORCH_ROOT}/lib:${LD_LIBRARY_PATH:-}
 fi
 if [[ -d /usr/local/cuda ]]; then
   export CUDA_HOME=/usr/local/cuda

@@ -6,7 +6,7 @@ e2e_path_overlay:
       - /image_rect_color
     camera_info_topic: /sensing/camera/camera0/camera_info
     path_topic: /shadow/e2e/path
-    yolo_detections_topic: /yolo/tracking
+    yolo_detections_topic: /yolo/detections
     output_image_topic: /shadow/e2e/overlay_image
     output_compressed_image_topic: /shadow/e2e/overlay_image/compressed
     output_compressed_jpeg_quality: 80
@@ -15,6 +15,8 @@ e2e_path_overlay:
     model_input_width_px: 1152
     model_input_height_px: 384
     output_max_edge_px: 640
+    process_rate_hz: 10.0
+    stale_image_timeout_sec: 0.5
     publish_status_every_frame: true
     use_tf_translation: true
     camera_x_m: 1.2
