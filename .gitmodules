@@ -41,3 +41,6 @@
 	path = src/img_proc/yolo_ros
 	url = https://github.com/mgonzs13/yolo_ros.git
 	branch = main
+[submodule "src/tts/irodori_tts_lite"]
+	path = src/tts/irodori_tts_lite
+	url = https://github.com/fis-teria/Irodori-TTS-Lite.git

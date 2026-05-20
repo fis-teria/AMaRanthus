@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -206,15 +207,16 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(500)
-        self.log_view.setMinimumHeight(120)
-        self.log_view.setMaximumHeight(180)
         self.log_view.setPlaceholderText("GUI logs")
+        self.status_log_tabs = QTabWidget()
+        self.status_log_tabs.setObjectName("StatusLogTabs")
+        self.status_log_tabs.addTab(self.status_panel, "VehicleStatus")
+        self.status_log_tabs.addTab(self.log_view, "Log")
 
         right_layout.addLayout(source_grid)
-        right_layout.addWidget(self.status_panel, 0)
+        right_layout.addWidget(self.status_log_tabs, 0)
         right_layout.addWidget(self.shadow_panel, 0)
         right_layout.addWidget(self.sensor_view, 1)
-        right_layout.addWidget(self.log_view, 0)
 
         splitter.addWidget(left_container)
         splitter.addWidget(right_container)
@@ -254,6 +256,9 @@ class MainWindow(QMainWindow):
         )
         self.pointcloud_view.set_points(state.pointcloud_points)
         self.camera_view.set_frame(state.camera_frame)
+        self.map_widget.set_phone_current(state.phone_current)
+        self.map_widget.set_phone_goal(state.phone_goal)
+        self.map_widget.set_phone_route(state.phone_route_points, state.phone_route_steps)
 
     def switch_left_view(self, view_name: str) -> None:
         self.left_stack.setCurrentIndex(self._left_view_indexes.get(view_name, 0))
@@ -464,6 +469,10 @@ class MainWindow(QMainWindow):
             gps_status=field_source("gps").gps_status,
             shadow=field_source("shadow").shadow,
             camera_frame=field_source("camera").camera_frame,
+            phone_current=field_source("gps").phone_current,
+            phone_goal=field_source("gps").phone_goal,
+            phone_route_points=field_source("gps").phone_route_points,
+            phone_route_steps=field_source("gps").phone_route_steps,
         )
 
     def _blank_ui_state(self) -> UiState:
@@ -532,6 +541,9 @@ def build_data_sources(
     ros_speed_topic: str,
     ros_mode_topic: str,
     ros_gps_topic: str,
+    ros_phone_fix_topic: str,
+    ros_phone_goal_topic: str,
+    ros_phone_status_topic: str,
     ros_shadow_ego_speed_topic: str,
     ros_shadow_ego_yaw_rate_topic: str,
     ros_shadow_ego_curvature_topic: str,
@@ -567,6 +579,9 @@ def build_data_sources(
             speed_topic=ros_speed_topic,
             mode_topic=ros_mode_topic,
             gps_topic=ros_gps_topic,
+            phone_fix_topic=ros_phone_fix_topic,
+            phone_goal_topic=ros_phone_goal_topic,
+            phone_status_topic=ros_phone_status_topic,
             shadow_ego_speed_topic=ros_shadow_ego_speed_topic,
             shadow_ego_yaw_rate_topic=ros_shadow_ego_yaw_rate_topic,
             shadow_ego_curvature_topic=ros_shadow_ego_curvature_topic,

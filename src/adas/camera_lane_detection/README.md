@@ -5,7 +5,7 @@ for Shadow Mode route targets.
 
 It is intentionally separate from the existing YOLO object detector. YOLO continues
 to publish object detections and tracking boxes, while this package is for a
-dedicated semantic-segmentation model that produces a lane / road-edge mask.
+dedicated lane / road-edge mask.
 
 Inputs:
 
@@ -17,19 +17,18 @@ Outputs:
 - `/shadow/perception/lane_path` (`nav_msgs/msg/Path`)
 - `/shadow/perception/lane_status` (`std_msgs/msg/String`, JSON)
 
-The model interface currently supports ONNX semantic segmentation through OpenCV
-DNN. Configure `model_path` to point at the dedicated lane model. If the model is
+The default backend is `opencv_classical`, a lightweight color/ROI based detector
+that does not need a model file. It can publish a conservative path when white or
+yellow lane markings are visible. A dedicated ONNX semantic-segmentation model is
+still supported with `backend:=opencv_onnx model_path:=...`. If the ONNX model is
 not configured or cannot be loaded, the node publishes status only and does not
-publish a fake path. In that state it also avoids subscribing to the full-size
-camera image so enabling the launch switch does not add raw-image delivery load
-before a real model is installed.
+publish a fake path.
 
 Standalone launch:
 
 ```bash
-ros2 launch camera_lane_detection camera_lane_detection.launch.py \
-  model_path:=/home/graneple/Helianthus/amaranthus/Data/models/camera_lane/lane_segmentation.onnx
+ros2 launch camera_lane_detection camera_lane_detection.launch.py
 ```
 
-The E2E launch exposes this as `use_camera_lane_detection` and keeps it disabled
-by default until a real model is installed.
+The E2E wrapper enables this package by default with `opencv_classical`. Set
+`CAMERA_LANE_DETECTION=0` before launching E2E to disable it.

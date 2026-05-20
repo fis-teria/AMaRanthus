@@ -1,0 +1,21 @@
+shadow_localization_fusion:
+  ros__parameters:
+    lidar_odom_topic: /Odometry
+    phone_fix_topic: /phone/gps/fix
+    spresense_fix_topic: /spresense/gps/fix
+    fused_odom_topic: /shadow/fused/odometry
+    fused_path_topic: /shadow/fused/path
+    status_topic: /shadow/fused/status
+    output_frame: ""
+    child_frame_id: ""
+    fix_timeout_sec: 3.0
+    max_fix_accuracy_m: 25.0
+    unknown_accuracy_m: 15.0
+    min_fix_interval_sec: 0.2
+    phone_weight: 0.6
+    spresense_weight: 1.0
+    correction_gain: 0.08
+    max_correction_step_m: 0.5
+    max_residual_m: 40.0
+    apply_z_correction: false
+    path_buffer_size: 200

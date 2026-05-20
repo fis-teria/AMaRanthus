@@ -71,6 +71,26 @@ QCheckBox::indicator {
     width: 16px;
     height: 16px;
 }
+QTabWidget::pane {
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    top: -1px;
+}
+QTabBar::tab {
+    background-color: #e5e7eb;
+    border: 1px solid #cbd5e1;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    color: #334155;
+    min-width: 92px;
+    padding: 5px 10px;
+}
+QTabBar::tab:selected {
+    background-color: #ffffff;
+    color: #0b4253;
+    font-weight: bold;
+}
 QToolTip {
     background-color: #1f2933;
     border: 1px solid #64748b;
@@ -172,6 +192,26 @@ QCheckBox::indicator:checked {
     background-color: #2aa9c0;
     border: 1px solid #6fe6f7;
     border-radius: 4px;
+}
+QTabWidget::pane {
+    border: 1px solid #354656;
+    border-radius: 6px;
+    top: -1px;
+}
+QTabBar::tab {
+    background-color: #182029;
+    border: 1px solid #354656;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    color: #9aa8b5;
+    min-width: 92px;
+    padding: 5px 10px;
+}
+QTabBar::tab:selected {
+    background-color: #0d1117;
+    color: #ecfeff;
+    font-weight: bold;
 }
 QScrollBar:vertical,
 QScrollBar:horizontal {

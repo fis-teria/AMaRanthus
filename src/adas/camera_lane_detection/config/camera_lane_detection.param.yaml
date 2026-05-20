@@ -1,14 +1,14 @@
 camera_lane_detection:
   ros__parameters:
     enabled: true
-    backend: opencv_onnx
+    backend: opencv_classical
     model_path: ""
     image_topic: /sensing/camera/camera0/image_rect_color
     camera_info_topic: /sensing/camera/camera0/camera_info
     output_path_topic: /shadow/perception/lane_path
     status_topic: /shadow/perception/lane_status
     output_frame: base_link
-    max_process_rate_hz: 5.0
+    max_process_rate_hz: 20.0
     input_width: 512
     input_height: 288
     input_scale: 0.00392156862745098

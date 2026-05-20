@@ -112,6 +112,8 @@ def generate_launch_description():
     use_virtual_control = LaunchConfiguration("use_virtual_control")
     use_route_target = LaunchConfiguration("use_route_target")
     use_metrics = LaunchConfiguration("use_metrics")
+    use_phone_location_bridge = LaunchConfiguration("use_phone_location_bridge")
+    use_localization_fusion = LaunchConfiguration("use_localization_fusion")
     record_shadow_bag = LaunchConfiguration("record_shadow_bag")
 
     virtual_input_mode = LaunchConfiguration("virtual_input_mode")
@@ -120,6 +122,13 @@ def generate_launch_description():
     pointcloud_z_max = LaunchConfiguration("pointcloud_z_max")
     pointcloud_stride = LaunchConfiguration("pointcloud_stride")
     odom_topic = LaunchConfiguration("odom_topic")
+    localization_fusion_param_file = LaunchConfiguration("localization_fusion_param_file")
+    localization_lidar_odom_topic = LaunchConfiguration("localization_lidar_odom_topic")
+    phone_fix_topic = LaunchConfiguration("phone_fix_topic")
+    spresense_fix_topic = LaunchConfiguration("spresense_fix_topic")
+    fused_odom_topic = LaunchConfiguration("fused_odom_topic")
+    fused_path_topic = LaunchConfiguration("fused_path_topic")
+    fused_status_topic = LaunchConfiguration("fused_status_topic")
     ego_output_frame = LaunchConfiguration("ego_output_frame")
     virtual_output_frame = LaunchConfiguration("virtual_output_frame")
 
@@ -133,7 +142,82 @@ def generate_launch_description():
     metrics_csv_path = LaunchConfiguration("metrics_csv_path")
 
     shadow_bringup_share = FindPackageShare("shadow_mode_bringup")
+    localization_fusion_share = FindPackageShare("shadow_mode_localization_fusion")
     route_target_share = FindPackageShare("shadow_route_target")
+
+    phone_location_bridge = Node(
+        package="phone_location_bridge",
+        executable="phone_location_bridge_node.py",
+        name="phone_location_bridge",
+        output="screen",
+        parameters=[
+            {
+                "server_host": LaunchConfiguration("phone_bridge_server_host"),
+                "server_port": ParameterValue(
+                    LaunchConfiguration("phone_bridge_server_port"), value_type=int
+                ),
+                "use_https": ParameterValue(
+                    LaunchConfiguration("phone_bridge_use_https"), value_type=bool
+                ),
+                "tls_cert_file": LaunchConfiguration("phone_bridge_tls_cert_file"),
+                "tls_key_file": LaunchConfiguration("phone_bridge_tls_key_file"),
+                "osrm_service_url": LaunchConfiguration("phone_bridge_osrm_service_url"),
+                "fix_topic": LaunchConfiguration("phone_bridge_fix_topic"),
+                "goal_topic": LaunchConfiguration("phone_bridge_goal_topic"),
+                "route_path_topic": LaunchConfiguration("gui_route_path_topic"),
+                "gps_status_topic": LaunchConfiguration("phone_bridge_gps_status_topic"),
+                "status_topic": LaunchConfiguration("phone_bridge_status_topic"),
+                "route_frame_id": LaunchConfiguration("route_target_default_frame_id"),
+                "route_command_topic": LaunchConfiguration("route_command_topic"),
+                "route_command": LaunchConfiguration("phone_bridge_route_command"),
+                "auto_reroute_enabled": ParameterValue(
+                    LaunchConfiguration("phone_bridge_auto_reroute_enabled"),
+                    value_type=bool,
+                ),
+                "off_route_threshold_m": ParameterValue(
+                    LaunchConfiguration("phone_bridge_off_route_threshold_m"),
+                    value_type=float,
+                ),
+                "off_route_hold_sec": ParameterValue(
+                    LaunchConfiguration("phone_bridge_off_route_hold_sec"),
+                    value_type=float,
+                ),
+                "reroute_cooldown_sec": ParameterValue(
+                    LaunchConfiguration("phone_bridge_reroute_cooldown_sec"),
+                    value_type=float,
+                ),
+            }
+        ],
+        condition=IfCondition(use_phone_location_bridge),
+    )
+
+    localization_fusion = Node(
+        package="shadow_mode_localization_fusion",
+        executable="shadow_localization_fusion_node.py",
+        name="shadow_localization_fusion",
+        output="screen",
+        parameters=[
+            localization_fusion_param_file,
+            {
+                "lidar_odom_topic": localization_lidar_odom_topic,
+                "phone_fix_topic": phone_fix_topic,
+                "spresense_fix_topic": spresense_fix_topic,
+                "fused_odom_topic": fused_odom_topic,
+                "fused_path_topic": fused_path_topic,
+                "status_topic": fused_status_topic,
+                "fix_timeout_sec": ParameterValue(
+                    LaunchConfiguration("localization_fix_timeout_sec"), value_type=float
+                ),
+                "max_fix_accuracy_m": ParameterValue(
+                    LaunchConfiguration("localization_max_fix_accuracy_m"), value_type=float
+                ),
+                "correction_gain": ParameterValue(
+                    LaunchConfiguration("localization_correction_gain"), value_type=float
+                ),
+            },
+        ],
+        condition=IfCondition(use_localization_fusion),
+    )
 
     ego_estimation = Node(
         package="shadow_mode_ego_estimation",
@@ -328,6 +412,16 @@ def generate_launch_description():
                 description="shadow_mode_metrics を起動して ego と virtual control を比較します。",
             ),
             DeclareLaunchArgument(
+                "use_phone_location_bridge",
+                default_value="false",
+                description="USB tethered phone location web bridge を起動します。",
+            ),
+            DeclareLaunchArgument(
+                "use_localization_fusion",
+                default_value="false",
+                description="LiDAR odometry と phone/Spresense NavSatFix の融合 odometry を起動します。",
+            ),
+            DeclareLaunchArgument(
                 "shadow_mode_param_file",
                 default_value=PathJoinSubstitution(
                     [shadow_bringup_share, "config", "shadow_mode_bringup.param.yaml"]
@@ -383,6 +477,62 @@ def generate_launch_description():
                 "odom_topic",
                 default_value="/Odometry",
                 description="Ego 推定に使う odometry トピック。既定では FAST-LIO の /Odometry。",
+            ),
+            DeclareLaunchArgument(
+                "localization_fusion_param_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        localization_fusion_share,
+                        "config",
+                        "shadow_localization_fusion.param.yaml",
+                    ]
+                ),
+                description="shadow_mode_localization_fusion のパラメータファイル。",
+            ),
+            DeclareLaunchArgument(
+                "localization_lidar_odom_topic",
+                default_value="/Odometry",
+                description="融合ノードが購読する LiDAR odometry 入力。",
+            ),
+            DeclareLaunchArgument(
+                "phone_fix_topic",
+                default_value="/phone/gps/fix",
+                description="融合ノードが購読するスマホ NavSatFix。",
+            ),
+            DeclareLaunchArgument(
+                "spresense_fix_topic",
+                default_value="/spresense/gps/fix",
+                description="融合ノードが購読する Spresense NavSatFix。",
+            ),
+            DeclareLaunchArgument(
+                "fused_odom_topic",
+                default_value="/shadow/fused/odometry",
+                description="融合ノードが publish する odometry。",
+            ),
+            DeclareLaunchArgument(
+                "fused_path_topic",
+                default_value="/shadow/fused/path",
+                description="融合ノードが publish する path。",
+            ),
+            DeclareLaunchArgument(
+                "fused_status_topic",
+                default_value="/shadow/fused/status",
+                description="融合ノードの JSON status topic。",
+            ),
+            DeclareLaunchArgument(
+                "localization_fix_timeout_sec",
+                default_value="3.0",
+                description="GNSS fix を fresh とみなす秒数。",
+            ),
+            DeclareLaunchArgument(
+                "localization_max_fix_accuracy_m",
+                default_value="25.0",
+                description="融合に使う最大 GNSS accuracy [m]。",
+            ),
+            DeclareLaunchArgument(
+                "localization_correction_gain",
+                default_value="0.08",
+                description="GNSS 残差を LiDAR odometry に反映する低周波ゲイン。",
             ),
             DeclareLaunchArgument(
                 "ego_output_frame",
@@ -470,6 +620,81 @@ def generate_launch_description():
                 description="route path が無いとき固定前方 target を publish するか。",
             ),
             DeclareLaunchArgument(
+                "phone_bridge_server_host",
+                default_value="0.0.0.0",
+                description="phone_location_bridge の HTTP bind address。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_server_port",
+                default_value="8765",
+                description="phone_location_bridge の HTTP port。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_use_https",
+                default_value="false",
+                description="phone_location_bridge を HTTPS で起動します。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_tls_cert_file",
+                default_value="",
+                description="HTTPS 用 TLS certificate file。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_tls_key_file",
+                default_value="",
+                description="HTTPS 用 TLS private key file。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_osrm_service_url",
+                default_value="https://routing.openstreetmap.de/routed-car/route/v1/driving",
+                description="OSRM route API endpoint。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_fix_topic",
+                default_value="/phone/gps/fix",
+                description="スマホ現在地 NavSatFix topic。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_goal_topic",
+                default_value="/phone/route/goal",
+                description="スマホ目的地 JSON topic。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_gps_status_topic",
+                default_value="/vehicle/gps_status",
+                description="GUI top status 用 GPS status topic。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_status_topic",
+                default_value="/phone/location/status",
+                description="phone_location_bridge health/status JSON topic。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_route_command",
+                default_value="lane_follow",
+                description="スマホ route 受信時に publish する route command。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_auto_reroute_enabled",
+                default_value="true",
+                description="OSRM ルートから外れたときに自動再検索します。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_off_route_threshold_m",
+                default_value="30.0",
+                description="自動再検索判定に使うルート逸脱距離。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_off_route_hold_sec",
+                default_value="3.0",
+                description="ルート逸脱が継続したとみなすまでの秒数。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_reroute_cooldown_sec",
+                default_value="10.0",
+                description="自動再検索後の最小クールダウン秒数。",
+            ),
+            DeclareLaunchArgument(
                 "pointcloud_to_laserscan_param_file",
                 default_value="",
                 description=(
@@ -529,11 +754,16 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "bag_record_regex",
-                default_value="(/shadow/.*|/livox/lane_detection/.*|/Odometry|/path|/scan)",
+                default_value=(
+                    "(/shadow/.*|/livox/lane_detection/.*|/Odometry|/path|/scan|"
+                    "/phone/gps/fix|/spresense/gps/fix)"
+                ),
                 description="record_shadow_bag=true のとき記録する topic regex。",
             ),
             OpaqueFunction(function=_optional_adas_pipeline),
             OpaqueFunction(function=_optional_fast_lio),
+            phone_location_bridge,
+            localization_fusion,
             ego_estimation,
             virtual_control,
             route_target,

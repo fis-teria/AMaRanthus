@@ -45,6 +45,18 @@ def generate_launch_description():
                 default_value="/shadow/e2e/model_input_image",
             ),
             DeclareLaunchArgument(
+                "yolo_input_image_topic",
+                default_value="/shadow/perception/yolo_input_image",
+            ),
+            DeclareLaunchArgument(
+                "lane_input_image_topic",
+                default_value="/shadow/perception/lane_input_image",
+            ),
+            DeclareLaunchArgument(
+                "lane_input_camera_info_topic",
+                default_value="/shadow/perception/lane_input_camera_info",
+            ),
+            DeclareLaunchArgument(
                 "use_tf_translation",
                 default_value="true",
             ),
@@ -60,6 +72,10 @@ def generate_launch_description():
             DeclareLaunchArgument("stale_image_timeout_sec", default_value="0.5"),
             DeclareLaunchArgument("model_input_width_px", default_value="1152"),
             DeclareLaunchArgument("model_input_height_px", default_value="384"),
+            DeclareLaunchArgument("yolo_input_width_px", default_value="960"),
+            DeclareLaunchArgument("yolo_input_height_px", default_value="640"),
+            DeclareLaunchArgument("lane_input_width_px", default_value="640"),
+            DeclareLaunchArgument("lane_input_height_px", default_value="427"),
             Node(
                 package="e2e_path_overlay",
                 executable=LaunchConfiguration("executable"),
@@ -85,6 +101,15 @@ def generate_launch_description():
                         "model_input_image_topic": LaunchConfiguration(
                             "model_input_image_topic"
                         ),
+                        "yolo_input_image_topic": LaunchConfiguration(
+                            "yolo_input_image_topic"
+                        ),
+                        "lane_input_image_topic": LaunchConfiguration(
+                            "lane_input_image_topic"
+                        ),
+                        "lane_input_camera_info_topic": LaunchConfiguration(
+                            "lane_input_camera_info_topic"
+                        ),
                         "use_tf_translation": ParameterValue(
                             LaunchConfiguration("use_tf_translation"), value_type=bool
                         ),
@@ -103,6 +128,18 @@ def generate_launch_description():
                         ),
                         "model_input_height_px": ParameterValue(
                             LaunchConfiguration("model_input_height_px"), value_type=int
+                        ),
+                        "yolo_input_width_px": ParameterValue(
+                            LaunchConfiguration("yolo_input_width_px"), value_type=int
+                        ),
+                        "yolo_input_height_px": ParameterValue(
+                            LaunchConfiguration("yolo_input_height_px"), value_type=int
+                        ),
+                        "lane_input_width_px": ParameterValue(
+                            LaunchConfiguration("lane_input_width_px"), value_type=int
+                        ),
+                        "lane_input_height_px": ParameterValue(
+                            LaunchConfiguration("lane_input_height_px"), value_type=int
                         ),
                     },
                 ],

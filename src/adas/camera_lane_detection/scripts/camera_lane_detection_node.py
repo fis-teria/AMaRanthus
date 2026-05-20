@@ -21,7 +21,7 @@ class CameraLaneDetectionNode(Node):
         super().__init__("camera_lane_detection")
 
         self.enabled = bool(self.declare_parameter("enabled", True).value)
-        self.backend = self.declare_parameter("backend", "opencv_onnx").value
+        self.backend = self.declare_parameter("backend", "opencv_classical").value
         self.model_path = self.declare_parameter("model_path", "").value
         self.image_topic = self.declare_parameter(
             "image_topic", "/sensing/camera/camera0/image_rect_color"
@@ -37,7 +37,7 @@ class CameraLaneDetectionNode(Node):
         ).value
         self.output_frame = self.declare_parameter("output_frame", "base_link").value
         self.max_process_rate_hz = float(
-            self.declare_parameter("max_process_rate_hz", 5.0).value
+            self.declare_parameter("max_process_rate_hz", 20.0).value
         )
         self.input_width = int(self.declare_parameter("input_width", 512).value)
         self.input_height = int(self.declare_parameter("input_height", 288).value)
@@ -94,7 +94,7 @@ class CameraLaneDetectionNode(Node):
         self.path_pub = self.create_publisher(Path, self.output_path_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
 
-        if self.enabled and self.net is not None:
+        if self.enabled and (self.net is not None or self.backend == "opencv_classical"):
             self.image_sub = self.create_subscription(
                 Image, self.image_topic, self._on_image, sensor_qos
             )
@@ -132,6 +132,9 @@ class CameraLaneDetectionNode(Node):
         if not self.enabled:
             self.model_error = "disabled"
             return
+        if self.backend == "opencv_classical":
+            self.model_error = ""
+            return
         if self.backend != "opencv_onnx":
             self.model_error = f"unsupported_backend:{self.backend}"
             return
@@ -160,7 +163,7 @@ class CameraLaneDetectionNode(Node):
                 return
         self.last_process_time = now
 
-        if not self.enabled or self.net is None:
+        if not self.enabled or (self.net is None and self.backend != "opencv_classical"):
             if self.publish_status_every_frame:
                 self._publish_status(msg, published=False, reason=self.model_error or "not_ready")
             return
@@ -202,6 +205,9 @@ class CameraLaneDetectionNode(Node):
         raise ValueError(f"unsupported image encoding: {msg.encoding}")
 
     def _run_segmentation(self, rgb: np.ndarray) -> np.ndarray:
+        if self.backend == "opencv_classical":
+            return self._run_classical_lane_mask(rgb)
+
         resized = cv2.resize(rgb, (self.input_width, self.input_height), interpolation=cv2.INTER_LINEAR)
         tensor = resized.astype(np.float32) * self.input_scale
         tensor = (tensor - self.input_mean_rgb) / np.maximum(self.input_std_rgb, 1.0e-6)
@@ -226,6 +232,36 @@ class CameraLaneDetectionNode(Node):
         else:
             raise ValueError(f"unsupported model output shape: {output.shape}")
         return cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    def _run_classical_lane_mask(self, rgb: np.ndarray) -> np.ndarray:
+        height, width = rgb.shape[:2]
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
+        white_mask = cv2.inRange(hsv, np.array([0, 0, 185]), np.array([180, 70, 255]))
+        yellow_mask = cv2.inRange(hsv, np.array([15, 45, 90]), np.array([40, 255, 255]))
+        mask = cv2.bitwise_or(white_mask, yellow_mask)
+
+        roi = np.zeros((height, width), dtype=np.uint8)
+        roi_top = int(np.clip(self.roi_top_ratio, 0.0, 1.0) * height)
+        roi_bottom = int(np.clip(self.roi_bottom_ratio, 0.0, 1.0) * height)
+        polygon = np.array(
+            [
+                [
+                    (int(width * 0.08), roi_bottom),
+                    (int(width * 0.40), roi_top),
+                    (int(width * 0.60), roi_top),
+                    (int(width * 0.92), roi_bottom),
+                ]
+            ],
+            dtype=np.int32,
+        )
+        cv2.fillPoly(roi, polygon, 255)
+        mask = cv2.bitwise_and(mask, roi)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        return (mask > 0).astype(np.uint8)
 
     def _mask_to_path(self, mask: np.ndarray, image_msg: Image) -> Path:
         height, width = mask.shape[:2]

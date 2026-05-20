@@ -45,6 +45,7 @@ CUDA も含めてホスト実行用に揃える:
 
 `--with-cuda` は Autoware に合わせて NVIDIA apt repository から CUDA 12.8 系の開発パッケージを導入します。別バージョンを使う場合は `CUDA_VERSION=12.8` を上書きしてください。
 `--with-yolo-cuda-venv` は `e2e_transfuser` / `camera_lidar_bringup` から参照する Python 環境を `Data/venvs/yolo_ros_cuda` に作成し、CUDA 対応の `torch` / `torchvision`、`ultralytics`、LEAD / TFv6 の推論に必要な軽量依存を導入します。
+`--with-irodori-tts-lite` は ROS 2 とは独立した uv 環境を `src/tts/irodori_tts_lite/.venv` に作成し、上流 Irodori-TTS checkout、Hugging Face / torch / triton などの cache を `src/tts/irodori_tts_lite` 直下に閉じ込めます。
 `--libtorch-install-dir /path/to/libtorch` か `LIBTORCH_INSTALL_DIR=/path/to/libtorch` を付けると、`/opt/libtorch` 以外へ libtorch を導入できます。開発機で `sudo` を使わずに置きたい場合は、Helianthus 直下から `./setup/ubuntu_setup.sh --libtorch-variant cu121 --libtorch-install-dir "$PWD/Data/libtorch"` のように指定します。
 
 NVIDIA driver カーネルモジュールのみをインストール (GPU を使うが nvidia-utils は不要な場合):
@@ -125,6 +126,7 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 - `--with-cuda` は NVIDIA apt repository の CUDA パッケージを使います。Autoware の既定は CUDA 12.8 です。
 - `--with-nvidia-driver` はカーネルアップデート後に NVIDIA driver が動作しなくなった場合に便利です。現在のカーネルバージョン用の `linux-modules-nvidia-<version>[-open]-<kernel>-<flavor>` パッケージを自動検出・インストールします。
 - `--with-yolo-cuda-venv` は数 GB の PyTorch CUDA wheel を `Data/venvs/yolo_ros_cuda` に導入します。この `Data/` は git 管理外で、`COLCON_IGNORE` により colcon の探索対象から外れます。
+- `--with-irodori-tts-lite` は `src/tts/irodori_tts_lite/setup.sh` を呼び出します。既定ではモデル本体の事前ダウンロードは行わず、初回実行時に `src/tts/irodori_tts_lite/.cache/huggingface` へ保存されます。事前取得したい場合は TTS ディレクトリで `./setup.sh --download-models` を実行してください。
 - `--with-nvidia-container-toolkit` は Docker が必要です。未導入なら `--install-docker` を併用してください。
 - `libtorch` の GPU バリアントは `cu118` と `cu121` を選べます。既定は `cu121` です。ホスト側 CUDA / ドライバとの整合は利用環境に合わせてください。
 - `setup/ubuntu_env.sh` は `LIBTORCH_ROOT` が指定されていればそれを使い、未指定の場合は Helianthus 直下の `Data/libtorch`、AMaRanthus 直下の `Data/libtorch`、`/opt/libtorch` の順に参照します。

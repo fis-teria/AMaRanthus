@@ -64,6 +64,9 @@ ROS_OBJECTS_TOPIC="${ROS_OBJECTS_TOPIC:-/livox/lane_detection/objects}"
 ROS_SPEED_TOPIC="${ROS_SPEED_TOPIC:-/vehicle/speed_kmh}"
 ROS_MODE_TOPIC="${ROS_MODE_TOPIC:-/vehicle/mode}"
 ROS_GPS_TOPIC="${ROS_GPS_TOPIC:-/vehicle/gps_status}"
+ROS_PHONE_FIX_TOPIC="${ROS_PHONE_FIX_TOPIC:-/phone/gps/fix}"
+ROS_PHONE_GOAL_TOPIC="${ROS_PHONE_GOAL_TOPIC:-/phone/route/goal}"
+ROS_PHONE_STATUS_TOPIC="${ROS_PHONE_STATUS_TOPIC:-/phone/location/status}"
 ROS_SHADOW_EGO_SPEED_TOPIC="${ROS_SHADOW_EGO_SPEED_TOPIC:-/shadow/ego/speed}"
 ROS_SHADOW_EGO_YAW_RATE_TOPIC="${ROS_SHADOW_EGO_YAW_RATE_TOPIC:-/shadow/ego/yaw_rate}"
 ROS_SHADOW_EGO_CURVATURE_TOPIC="${ROS_SHADOW_EGO_CURVATURE_TOPIC:-/shadow/ego/curvature}"
@@ -126,6 +129,9 @@ exec uv run main.py \
     --ros-speed-topic "${ROS_SPEED_TOPIC}" \
     --ros-mode-topic "${ROS_MODE_TOPIC}" \
     --ros-gps-topic "${ROS_GPS_TOPIC}" \
+    --ros-phone-fix-topic "${ROS_PHONE_FIX_TOPIC}" \
+    --ros-phone-goal-topic "${ROS_PHONE_GOAL_TOPIC}" \
+    --ros-phone-status-topic "${ROS_PHONE_STATUS_TOPIC}" \
     --ros-shadow-ego-speed-topic "${ROS_SHADOW_EGO_SPEED_TOPIC}" \
     --ros-shadow-ego-yaw-rate-topic "${ROS_SHADOW_EGO_YAW_RATE_TOPIC}" \
     --ros-shadow-ego-curvature-topic "${ROS_SHADOW_EGO_CURVATURE_TOPIC}" \

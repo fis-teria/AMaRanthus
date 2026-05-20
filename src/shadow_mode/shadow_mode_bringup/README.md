@@ -6,18 +6,10 @@
 
 ## 起動例
 
-Livox ADAS 前段と FAST-LIO2 も含めて起動します。
+Livox ADAS 前段も含めて起動します。
 
 ```bash
 ros2 launch shadow_mode_bringup shadow_mode_bringup.launch.py
-```
-
-既定では `use_adas_bringup:=true` に追従して `use_fast_lio:=true` になり、`fast_lio` の `mapping.launch.py` を `mid360.yaml` で起動します。FAST-LIO2 の出力 `/Odometry` を `shadow_mode_ego_estimation` が購読します。
-
-FAST-LIO2 だけ止めたい場合:
-
-```bash
-ros2 launch shadow_mode_bringup shadow_mode_bringup.launch.py use_fast_lio:=false
 ```
 
 Autoware も同じ導線で起動し、センサ入力は AMaRanthus 側の Livox / odometry を使う場合:
@@ -34,7 +26,7 @@ rosbag や既存トピックを replay する場合は、センサ前段を起�
 ros2 launch shadow_mode_bringup shadow_mode_bringup.launch.py use_adas_bringup:=false
 ```
 
-この replay 構成では、Livox/ADAS 前段や FAST-LIO2 を起動せず、`shadow_mode_ego_estimation`、`shadow_mode_virtual_control`、`shadow_mode_metrics` だけで起動できます。`/Odometry` から車速・曲率・操舵 proxy を推定し、実 CAN / OBD の driver input は使いません。
+この replay 構成では、Livox/ADAS 前段パッケージをビルドしていなくても `shadow_mode_ego_estimation`、`shadow_mode_virtual_control`、`shadow_mode_metrics` だけで起動できます。`/Odometry` から車速・曲率・操舵 proxy を推定し、実 CAN / OBD の driver input は使いません。
 
 評価用 bag も同時に記録します。
 
@@ -83,11 +75,6 @@ ros2 launch shadow_mode_bringup shadow_mode_bringup.launch.py use_adas_bringup:=
 ## 主要 launch 引数
 
 - `use_adas_bringup`: `adas_bringup` を含めて Livox/ADAS 前段を起動します。
-- `use_fast_lio`: `fast_lio` の `mapping.launch.py` を起動します。既定値は `use_adas_bringup` と同じです。
-- `fast_lio_config_path`: FAST-LIO2 の config ディレクトリです。空なら `fast_lio` の既定 config ディレクトリを使います。
-- `fast_lio_config_file`: FAST-LIO2 の config ファイル名です。既定は `mid360.yaml` です。
-- `use_fast_lio_rviz`: FAST-LIO2 付属 RViz を起動します。
-- `fast_lio_rviz_cfg`: FAST-LIO2 RViz config です。空なら `fast_lio` の既定 RViz config を使います。
 - `use_ego_estimation`: Ego 推定ノードを起動します。
 - `use_virtual_control`: 仮想制御ノードを起動します。
 - `use_metrics`: Ego と仮想制御の比較メトリクスノードを起動します。

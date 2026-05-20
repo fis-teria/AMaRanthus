@@ -20,6 +20,24 @@ class PointCloudPoint:
 
 
 @dataclass
+class GeoPoint:
+    lat: float
+    lon: float
+    name: str = ""
+    accuracy_m: Optional[float] = None
+
+
+@dataclass
+class RouteStep:
+    lat: float
+    lon: float
+    route_index: int
+    text: str
+    distance_m: float = 0.0
+    duration_sec: float = 0.0
+
+
+@dataclass
 class CameraFrame:
     image: QImage
     width: int
@@ -58,3 +76,7 @@ class UiState:
     gps_status: str
     shadow: ShadowMetrics = field(default_factory=ShadowMetrics)
     camera_frame: Optional[CameraFrame] = None
+    phone_current: Optional[GeoPoint] = None
+    phone_goal: Optional[GeoPoint] = None
+    phone_route_points: List[GeoPoint] = field(default_factory=list)
+    phone_route_steps: List[RouteStep] = field(default_factory=list)

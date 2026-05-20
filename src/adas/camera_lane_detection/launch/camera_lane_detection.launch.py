@@ -48,7 +48,7 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("enabled", default_value="true"),
-            DeclareLaunchArgument("backend", default_value="opencv_onnx"),
+            DeclareLaunchArgument("backend", default_value="opencv_classical"),
             DeclareLaunchArgument("model_path", default_value=""),
             DeclareLaunchArgument(
                 "camera_lane_detection_image_topic",
@@ -63,7 +63,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("status_topic", default_value="/shadow/perception/lane_status"),
             DeclareLaunchArgument("output_frame", default_value="base_link"),
-            DeclareLaunchArgument("max_process_rate_hz", default_value="5.0"),
+            DeclareLaunchArgument("max_process_rate_hz", default_value="20.0"),
             DeclareLaunchArgument("input_width", default_value="512"),
             DeclareLaunchArgument("input_height", default_value="288"),
             node,

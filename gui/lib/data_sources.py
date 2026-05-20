@@ -10,7 +10,15 @@ from typing import Callable, Optional
 from PyQt5.QtCore import QPoint, QObject, QPointF, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPolygon
 
-from .models import CameraFrame, DetectedObject, PointCloudPoint, ShadowMetrics, UiState
+from .models import (
+    CameraFrame,
+    DetectedObject,
+    GeoPoint,
+    PointCloudPoint,
+    RouteStep,
+    ShadowMetrics,
+    UiState,
+)
 
 
 UiStateCallback = Callable[[UiState], None]
@@ -232,6 +240,9 @@ class Ros2DataSource(QObject):
         speed_topic: str,
         mode_topic: str,
         gps_topic: str,
+        phone_fix_topic: str,
+        phone_goal_topic: str,
+        phone_status_topic: str,
         shadow_ego_speed_topic: str,
         shadow_ego_yaw_rate_topic: str,
         shadow_ego_curvature_topic: str,
@@ -269,6 +280,9 @@ class Ros2DataSource(QObject):
         self._speed_topic = speed_topic
         self._mode_topic = mode_topic
         self._gps_topic = gps_topic
+        self._phone_fix_topic = phone_fix_topic
+        self._phone_goal_topic = phone_goal_topic
+        self._phone_status_topic = phone_status_topic
         self._shadow_ego_speed_topic = shadow_ego_speed_topic
         self._shadow_ego_yaw_rate_topic = shadow_ego_yaw_rate_topic
         self._shadow_ego_curvature_topic = shadow_ego_curvature_topic
@@ -328,6 +342,10 @@ class Ros2DataSource(QObject):
         self._speed_kmh = 0.0
         self._mode = "--"
         self._gps_status = "--"
+        self._phone_current: Optional[GeoPoint] = None
+        self._phone_goal: Optional[GeoPoint] = None
+        self._phone_route_points: list[GeoPoint] = []
+        self._phone_route_steps: list[RouteStep] = []
         self._shadow_metrics = ShadowMetrics()
         self._state_signal.connect(self._dispatch_state)
         self._live_signal.connect(self._dispatch_live_data)
@@ -359,7 +377,14 @@ class Ros2DataSource(QObject):
                 QoSProfile,
                 ReliabilityPolicy,
             )
-            from sensor_msgs.msg import CameraInfo, CompressedImage, Image, LaserScan, PointCloud2
+            from sensor_msgs.msg import (
+                CameraInfo,
+                CompressedImage,
+                Image,
+                LaserScan,
+                NavSatFix,
+                PointCloud2,
+            )
             from sensor_msgs_py import point_cloud2
             from std_msgs.msg import Float32, String
         except ImportError as exc:
@@ -438,6 +463,9 @@ class Ros2DataSource(QObject):
         node.create_subscription(Float32, self._speed_topic, self._on_speed, 10)
         node.create_subscription(String, self._mode_topic, self._on_mode, 10)
         node.create_subscription(String, self._gps_topic, self._on_gps, 10)
+        node.create_subscription(NavSatFix, self._phone_fix_topic, self._on_phone_fix, 10)
+        node.create_subscription(String, self._phone_goal_topic, self._on_phone_goal, 10)
+        node.create_subscription(String, self._phone_status_topic, self._on_phone_status, 10)
         node.create_subscription(
             Float32,
             self._shadow_ego_speed_topic,
@@ -538,6 +566,13 @@ class Ros2DataSource(QObject):
         self._log("INFO", f"Subscribed camera info topic: {self._camera_info_topic}")
         self._log("INFO", f"Subscribed PointCloud2 topic: {self._pointcloud_topic}")
         self._log("INFO", f"Subscribed LaserScan topics: {self._scan_topic}, {self._lane_topic}")
+        self._log(
+            "INFO",
+            (
+                "Subscribed phone location topics: "
+                f"{self._phone_fix_topic}, {self._phone_goal_topic}, {self._phone_status_topic}"
+            ),
+        )
         self._emit_state(force=True)
 
     def stop(self) -> None:
@@ -650,6 +685,10 @@ class Ros2DataSource(QObject):
                 gps_status=self._gps_status,
                 shadow=self._shadow_metrics,
                 camera_frame=self._camera_frame,
+                phone_current=self._phone_current,
+                phone_goal=self._phone_goal,
+                phone_route_points=self._phone_route_points,
+                phone_route_steps=self._phone_route_steps,
             )
         )
 
@@ -1130,6 +1169,111 @@ class Ros2DataSource(QObject):
         self._mark_live_data("gps")
         self._gps_status = msg.data
         self._emit_state()
+
+    def _on_phone_fix(self, msg) -> None:
+        if not math.isfinite(msg.latitude) or not math.isfinite(msg.longitude):
+            return
+        self._mark_live_data("gps")
+        accuracy_m = None
+        try:
+            covariance = list(msg.position_covariance)
+            if len(covariance) >= 1 and math.isfinite(covariance[0]) and covariance[0] > 0.0:
+                accuracy_m = math.sqrt(covariance[0])
+        except (TypeError, ValueError):
+            accuracy_m = None
+        self._phone_current = GeoPoint(
+            lat=float(msg.latitude),
+            lon=float(msg.longitude),
+            name="phone",
+            accuracy_m=accuracy_m,
+        )
+        self._emit_state()
+
+    def _on_phone_goal(self, msg) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        goal = payload.get("goal") if isinstance(payload, dict) else None
+        if not isinstance(goal, dict):
+            return
+        try:
+            lat = float(goal["lat"])
+            lon = float(goal["lon"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if not math.isfinite(lat) or not math.isfinite(lon):
+            return
+        self._mark_live_data("gps")
+        self._phone_goal = GeoPoint(
+            lat=lat,
+            lon=lon,
+            name=str(goal.get("name") or "goal"),
+            accuracy_m=None,
+        )
+        self._emit_state()
+
+    def _on_phone_status(self, msg) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        selected_route = payload.get("selected_route")
+        geometry = selected_route.get("geometry") if isinstance(selected_route, dict) else None
+        if not isinstance(geometry, list):
+            if self._phone_route_points:
+                self._phone_route_points = []
+                self._phone_route_steps = []
+                self._emit_state()
+            return
+
+        points: list[GeoPoint] = []
+        for item in geometry:
+            if not isinstance(item, dict):
+                continue
+            try:
+                lat = float(item["lat"])
+                lon = float(item["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if math.isfinite(lat) and math.isfinite(lon):
+                points.append(GeoPoint(lat=lat, lon=lon, name="route"))
+        self._mark_live_data("gps")
+        self._phone_route_points = points
+        self._phone_route_steps = self._parse_phone_route_steps(selected_route)
+        self._emit_state()
+
+    def _parse_phone_route_steps(self, selected_route: dict) -> list[RouteStep]:
+        raw_steps = selected_route.get("guidance_steps")
+        if not isinstance(raw_steps, list):
+            return []
+        steps: list[RouteStep] = []
+        for item in raw_steps:
+            if not isinstance(item, dict):
+                continue
+            try:
+                lat = float(item["lat"])
+                lon = float(item["lon"])
+                route_index = int(item.get("route_index", 0))
+                distance_m = float(item.get("distance_m", 0.0))
+                duration_sec = float(item.get("duration_sec", 0.0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not math.isfinite(lat) or not math.isfinite(lon):
+                continue
+            steps.append(
+                RouteStep(
+                    lat=lat,
+                    lon=lon,
+                    route_index=max(0, route_index),
+                    text=str(item.get("text") or "道なりに進む"),
+                    distance_m=distance_m if math.isfinite(distance_m) else 0.0,
+                    duration_sec=duration_sec if math.isfinite(duration_sec) else 0.0,
+                )
+            )
+        return steps
 
     def _shadow_float_callback(self, field_name: str):
         def callback(msg) -> None:

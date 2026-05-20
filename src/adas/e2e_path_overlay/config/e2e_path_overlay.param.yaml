@@ -14,6 +14,13 @@ e2e_path_overlay:
     model_input_image_topic: /shadow/e2e/model_input_image
     model_input_width_px: 1152
     model_input_height_px: 384
+    yolo_input_image_topic: /shadow/perception/yolo_input_image
+    yolo_input_width_px: 960
+    yolo_input_height_px: 640
+    lane_input_image_topic: /shadow/perception/lane_input_image
+    lane_input_camera_info_topic: /shadow/perception/lane_input_camera_info
+    lane_input_width_px: 640
+    lane_input_height_px: 427
     output_max_edge_px: 640
     process_rate_hz: 10.0
     stale_image_timeout_sec: 0.5

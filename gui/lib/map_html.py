@@ -143,8 +143,39 @@ MAP_HTML = """
             margin-bottom: 4px;
             line-height: 1.35;
         }
+        .phone-locate-control a {
+            width: auto;
+            min-width: 86px;
+            padding: 0 10px;
+            font-family: 'Noto Sans CJK JP', Arial, sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 30px;
+            white-space: nowrap;
+        }
+        .phone-locate-control a.following {
+            background: #1a73e8;
+            color: #fff;
+        }
         .leaflet-control-attribution {
             font-size: 10px;
+        }
+        .phone-marker {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #00a3ff;
+            border: 3px solid #ffffff;
+            box-shadow: 0 0 0 2px rgba(0, 95, 170, 0.45), 0 2px 8px rgba(0,0,0,0.35);
+        }
+        .phone-goal-marker {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            background: #ff5c35;
+            border: 3px solid #ffffff;
+            box-shadow: 0 0 0 2px rgba(180, 45, 15, 0.45), 0 2px 8px rgba(0,0,0,0.35);
+            transform: rotate(45deg);
         }
     </style>
 </head>
@@ -178,6 +209,19 @@ MAP_HTML = """
         let startCoords = null;
         let endCoords = null;
         let currentPositionMarker = null;
+        let phoneCurrentMarker = null;
+        let phoneGoalMarker = null;
+        let phoneRouteLine = null;
+        let phoneOsrmRouteLine = null;
+        let phoneRouteLatLngs = [];
+        let phoneGuidanceSteps = [];
+        let phoneRouteSignature = '';
+        let phoneCurrentLatLng = null;
+        let phoneGoalLatLng = null;
+        let phoneRouteAutoFitEnabled = true;
+        let phoneFollowEnabled = false;
+        let phoneLocateButton = null;
+        let phoneProgrammaticViewChange = false;
         let navigationTimer = null;
         let activeRouteCoordinates = [];
         let instructionMeta = [];
@@ -185,6 +229,83 @@ MAP_HTML = """
         let currentCoordIndex = 0;
 
         const geocoder = L.Control.Geocoder.nominatim();
+
+        function updatePhoneLocateButton() {
+            if (!phoneLocateButton) {
+                return;
+            }
+            phoneLocateButton.textContent = phoneFollowEnabled ? '追従ON' : '現在地';
+            phoneLocateButton.title = phoneFollowEnabled ? '現在地追従をOFF' : '現在地に戻って追従ON';
+            if (phoneFollowEnabled) {
+                L.DomUtil.addClass(phoneLocateButton, 'following');
+            } else {
+                L.DomUtil.removeClass(phoneLocateButton, 'following');
+            }
+        }
+
+        function setPhoneFollowEnabled(enabled) {
+            phoneFollowEnabled = enabled;
+            updatePhoneLocateButton();
+        }
+
+        function runPhoneProgrammaticViewChange(callback) {
+            phoneProgrammaticViewChange = true;
+            callback();
+            window.setTimeout(function() {
+                phoneProgrammaticViewChange = false;
+            }, 700);
+        }
+
+        map.on('dragstart zoomstart', function() {
+            if (phoneProgrammaticViewChange) {
+                return;
+            }
+            phoneRouteAutoFitEnabled = false;
+            setPhoneFollowEnabled(false);
+        });
+
+        const phoneLocateControl = L.control({ position: 'bottomleft' });
+        phoneLocateControl.onAdd = function() {
+            const container = L.DomUtil.create('div', 'leaflet-bar phone-locate-control');
+            const button = L.DomUtil.create('a', '', container);
+            phoneLocateButton = button;
+            button.href = '#';
+            updatePhoneLocateButton();
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
+            L.DomEvent.on(button, 'click', function(event) {
+                L.DomEvent.preventDefault(event);
+                window.togglePhoneFollow();
+            });
+            return container;
+        };
+        phoneLocateControl.addTo(map);
+
+        function centerOnPhoneCurrent() {
+            if (!phoneCurrentLatLng) {
+                return;
+            }
+            const targetZoom = Math.max(map.getZoom(), 16);
+            runPhoneProgrammaticViewChange(function() {
+                map.setView(phoneCurrentLatLng, Math.min(targetZoom, 19), {
+                    animate: true,
+                    duration: 0.5
+                });
+            });
+        }
+
+        window.recenterPhoneCurrent = function() {
+            centerOnPhoneCurrent();
+        };
+
+        window.togglePhoneFollow = function() {
+            const nextEnabled = !phoneFollowEnabled;
+            setPhoneFollowEnabled(nextEnabled);
+            if (nextEnabled) {
+                phoneRouteAutoFitEnabled = false;
+                centerOnPhoneCurrent();
+            }
+        };
 
         function clearNavigationState() {
             if (navigationTimer) {
@@ -218,6 +339,252 @@ MAP_HTML = """
                 currentPositionMarker.setLatLng(latLng);
             }
         }
+
+        const phoneCurrentIcon = L.divIcon({
+            className: '',
+            html: '<div class="phone-marker"></div>',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+        });
+        const phoneGoalIcon = L.divIcon({
+            className: '',
+            html: '<div class="phone-goal-marker"></div>',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+        });
+
+        function updatePhoneRouteLine() {
+            if (phoneRouteLine) {
+                map.removeLayer(phoneRouteLine);
+                phoneRouteLine = null;
+            }
+            if (phoneRouteLatLngs.length >= 2) {
+                return;
+            }
+            if (!phoneCurrentLatLng || !phoneGoalLatLng) {
+                return;
+            }
+            phoneRouteLine = L.polyline([phoneCurrentLatLng, phoneGoalLatLng], {
+                color: '#00a3ff',
+                weight: 4,
+                opacity: 0.7,
+                dashArray: '8, 10',
+            }).addTo(map);
+        }
+
+        function normalizePhonePoint(point) {
+            if (!point || typeof point.lat !== 'number' || typeof point.lon !== 'number') {
+                return null;
+            }
+            return L.latLng(point.lat, point.lon);
+        }
+
+        function normalizePhoneRoute(points) {
+            if (!Array.isArray(points)) {
+                return [];
+            }
+            return points
+                .map(function(point) {
+                    if (!point || typeof point.lat !== 'number' || typeof point.lon !== 'number') {
+                        return null;
+                    }
+                    return L.latLng(point.lat, point.lon);
+                })
+                .filter(function(point) { return point !== null; });
+        }
+
+        window.setPhoneCurrentFromNative = function(point) {
+            const latLng = normalizePhonePoint(point);
+            if (!latLng) {
+                if (phoneCurrentMarker) {
+                    map.removeLayer(phoneCurrentMarker);
+                    phoneCurrentMarker = null;
+                }
+                phoneCurrentLatLng = null;
+                updatePhoneRouteLine();
+                return;
+            }
+            phoneCurrentLatLng = latLng;
+            const label = point.name || 'phone';
+            const accuracyText =
+                typeof point.accuracy_m === 'number' ? '<br/>accuracy: ' + point.accuracy_m.toFixed(1) + ' m' : '';
+            if (!phoneCurrentMarker) {
+                phoneCurrentMarker = L.marker(latLng, { icon: phoneCurrentIcon, zIndexOffset: 500 })
+                    .addTo(map)
+                    .bindPopup('<b>Current</b><br/>' + label + accuracyText);
+            } else {
+                phoneCurrentMarker.setLatLng(latLng);
+                phoneCurrentMarker.setPopupContent('<b>Current</b><br/>' + label + accuracyText);
+            }
+            if (phoneFollowEnabled) {
+                runPhoneProgrammaticViewChange(function() {
+                    map.panTo(latLng, { animate: true, duration: 0.35 });
+                });
+            }
+            updatePhoneRouteLine();
+            updatePhoneGuidance();
+        };
+
+        function normalizePhoneGuidanceSteps(steps) {
+            if (!Array.isArray(steps)) {
+                return [];
+            }
+            return steps
+                .map(function(step) {
+                    if (!step || typeof step.route_index !== 'number') {
+                        return null;
+                    }
+                    return {
+                        routeIndex: Math.max(0, Math.floor(step.route_index)),
+                        text: step.text || '道なりに進む',
+                        distanceM: Number(step.distance_m || 0),
+                        durationSec: Number(step.duration_sec || 0),
+                        latLng: (typeof step.lat === 'number' && typeof step.lon === 'number')
+                            ? L.latLng(step.lat, step.lon)
+                            : null
+                    };
+                })
+                .filter(function(step) { return step !== null; });
+        }
+
+        function routeSignature(routeLatLngs) {
+            if (!routeLatLngs || routeLatLngs.length === 0) {
+                return '';
+            }
+            const first = routeLatLngs[0];
+            const last = routeLatLngs[routeLatLngs.length - 1];
+            return [
+                routeLatLngs.length,
+                first.lat.toFixed(6),
+                first.lng.toFixed(6),
+                last.lat.toFixed(6),
+                last.lng.toFixed(6)
+            ].join(':');
+        }
+
+        function nearestPhoneRouteIndex() {
+            if (!phoneCurrentLatLng || phoneRouteLatLngs.length === 0) {
+                return 0;
+            }
+            let bestIndex = 0;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            phoneRouteLatLngs.forEach(function(point, index) {
+                const distance = map.distance(phoneCurrentLatLng, point);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestIndex = index;
+                }
+            });
+            return bestIndex;
+        }
+
+        function distanceAlongPhoneRoute(fromIndex, toIndex) {
+            if (phoneRouteLatLngs.length < 2) {
+                return 0;
+            }
+            const start = Math.max(0, Math.min(fromIndex, phoneRouteLatLngs.length - 1));
+            const end = Math.max(0, Math.min(toIndex, phoneRouteLatLngs.length - 1));
+            if (end <= start) {
+                return 0;
+            }
+            let sum = 0;
+            for (let i = start; i < end; i++) {
+                sum += map.distance(phoneRouteLatLngs[i], phoneRouteLatLngs[i + 1]);
+            }
+            return sum;
+        }
+
+        function updatePhoneGuidance() {
+            const routeInfo = document.getElementById('route-info');
+            const distanceEl = document.getElementById('route-distance');
+            const timeEl = document.getElementById('route-time');
+            const nextManeuverEl = document.getElementById('next-maneuver');
+            const stepsListEl = document.getElementById('steps-list');
+            if (phoneRouteLatLngs.length < 2 || phoneGuidanceSteps.length === 0) {
+                return;
+            }
+
+            const currentIndex = nearestPhoneRouteIndex();
+            let nextStepIndex = phoneGuidanceSteps.findIndex(function(step) {
+                return step.routeIndex >= currentIndex;
+            });
+            if (nextStepIndex < 0) {
+                nextStepIndex = phoneGuidanceSteps.length - 1;
+            }
+            const nextStep = phoneGuidanceSteps[nextStepIndex];
+            const distToStep = distanceAlongPhoneRoute(currentIndex, nextStep.routeIndex);
+
+            distanceEl.textContent = '距離: ' + formatDistanceMeters(distanceAlongPhoneRoute(currentIndex, phoneRouteLatLngs.length - 1));
+            timeEl.textContent = '時間: --';
+            nextManeuverEl.textContent =
+                '次の案内: ' + nextStep.text + '（約' + formatDistanceMeters(distToStep) + '先）';
+
+            stepsListEl.innerHTML = '';
+            stepElements = [];
+            phoneGuidanceSteps.forEach(function(step, index) {
+                const li = document.createElement('li');
+                li.textContent =
+                    step.text + '（' + formatDistanceMeters(step.distanceM) + ' / 約' +
+                    formatDurationSeconds(step.durationSec) + '）';
+                if (index === nextStepIndex) {
+                    li.style.background = '#e8f0fe';
+                    li.style.fontWeight = 'bold';
+                }
+                stepsListEl.appendChild(li);
+                stepElements.push(li);
+            });
+            routeInfo.classList.add('show');
+        }
+
+        window.setPhoneRouteFromNative = function(points, steps) {
+            const routeLatLngs = normalizePhoneRoute(points);
+            const nextSignature = routeSignature(routeLatLngs);
+            phoneGuidanceSteps = normalizePhoneGuidanceSteps(steps);
+            if (nextSignature !== phoneRouteSignature) {
+                if (phoneOsrmRouteLine) {
+                    map.removeLayer(phoneOsrmRouteLine);
+                    phoneOsrmRouteLine = null;
+                }
+                phoneRouteLatLngs = routeLatLngs;
+                phoneRouteSignature = nextSignature;
+                if (routeLatLngs.length >= 2) {
+                    phoneOsrmRouteLine = L.polyline(routeLatLngs, {
+                        color: '#ffcf33',
+                        weight: 5,
+                        opacity: 0.9,
+                    }).addTo(map);
+                    if (phoneRouteAutoFitEnabled) {
+                        map.fitBounds(phoneOsrmRouteLine.getBounds(), { padding: [40, 40], maxZoom: 16 });
+                    }
+                }
+            }
+            updatePhoneRouteLine();
+            updatePhoneGuidance();
+        };
+
+        window.setPhoneGoalFromNative = function(point) {
+            const latLng = normalizePhonePoint(point);
+            if (!latLng) {
+                if (phoneGoalMarker) {
+                    map.removeLayer(phoneGoalMarker);
+                    phoneGoalMarker = null;
+                }
+                phoneGoalLatLng = null;
+                updatePhoneRouteLine();
+                return;
+            }
+            phoneGoalLatLng = latLng;
+            const label = point.name || 'goal';
+            if (!phoneGoalMarker) {
+                phoneGoalMarker = L.marker(latLng, { icon: phoneGoalIcon, zIndexOffset: 450 })
+                    .addTo(map)
+                    .bindPopup('<b>Goal</b><br/>' + label);
+            } else {
+                phoneGoalMarker.setLatLng(latLng);
+                phoneGoalMarker.setPopupContent('<b>Goal</b><br/>' + label);
+            }
+            updatePhoneRouteLine();
+        };
 
         function extractRouteCoordinates(route) {
             const coords = route.coordinates || [];

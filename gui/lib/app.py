@@ -60,6 +60,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--ros-speed-topic", default="/vehicle/speed_kmh")
     parser.add_argument("--ros-mode-topic", default="/vehicle/mode")
     parser.add_argument("--ros-gps-topic", default="/vehicle/gps_status")
+    parser.add_argument("--ros-phone-fix-topic", default="/phone/gps/fix")
+    parser.add_argument("--ros-phone-goal-topic", default="/phone/route/goal")
+    parser.add_argument("--ros-phone-status-topic", default="/phone/location/status")
     parser.add_argument("--ros-shadow-ego-speed-topic", default="/shadow/ego/speed")
     parser.add_argument("--ros-shadow-ego-yaw-rate-topic", default="/shadow/ego/yaw_rate")
     parser.add_argument("--ros-shadow-ego-curvature-topic", default="/shadow/ego/curvature")
@@ -131,6 +134,9 @@ def main() -> None:
         ros_speed_topic=args.ros_speed_topic,
         ros_mode_topic=args.ros_mode_topic,
         ros_gps_topic=args.ros_gps_topic,
+        ros_phone_fix_topic=args.ros_phone_fix_topic,
+        ros_phone_goal_topic=args.ros_phone_goal_topic,
+        ros_phone_status_topic=args.ros_phone_status_topic,
         ros_shadow_ego_speed_topic=args.ros_shadow_ego_speed_topic,
         ros_shadow_ego_yaw_rate_topic=args.ros_shadow_ego_yaw_rate_topic,
         ros_shadow_ego_curvature_topic=args.ros_shadow_ego_curvature_topic,

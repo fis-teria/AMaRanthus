@@ -22,6 +22,7 @@ INSTALL_NVIDIA_DRIVER="${INSTALL_NVIDIA_DRIVER:-0}"
 INSTALL_IBUS_MOZC="${INSTALL_IBUS_MOZC:-1}"
 INSTALL_UV="${INSTALL_UV:-1}"
 INSTALL_YOLO_CUDA_VENV="${INSTALL_YOLO_CUDA_VENV:-0}"
+INSTALL_IRODORI_TTS_LITE="${INSTALL_IRODORI_TTS_LITE:-0}"
 SKIP_LIBREALSENSE="${SKIP_LIBREALSENSE:-0}"
 SKIP_LIVOX_SDK2="${SKIP_LIVOX_SDK2:-0}"
 SKIP_LIBTORCH="${SKIP_LIBTORCH:-0}"
@@ -47,6 +48,7 @@ Options:
   --skip-uv                        Skip uv installation.
   --with-yolo-cuda-venv            Install CUDA-enabled Python deps for yolo_ros under Data/venvs.
                                    Also installs the lightweight LEAD inference deps used by e2e_transfuser.
+  --with-irodori-tts-lite          Install isolated uv env for src/tts/irodori_tts_lite.
   --libtorch-variant <cpu|cu118|cu121>
                                    Select the libtorch package variant to install. Default: cu121.
   --libtorch-install-dir <path>    Install libtorch into this directory. Default: /opt/libtorch.
@@ -63,7 +65,7 @@ Environment variables:
   CUDA_VERSION,
   INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
   INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
-  INSTALL_YOLO_CUDA_VENV,
+  INSTALL_YOLO_CUDA_VENV, INSTALL_IRODORI_TTS_LITE,
   SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH, SKIP_ACADOS
 
 Examples:
@@ -98,6 +100,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-yolo-cuda-venv)
       INSTALL_YOLO_CUDA_VENV=1
+      ;;
+    --with-irodori-tts-lite)
+      INSTALL_IRODORI_TTS_LITE=1
       ;;
     --libtorch-variant)
       shift
@@ -615,6 +620,23 @@ if not torch.cuda.is_available():
 PY
 }
 
+install_irodori_tts_lite() {
+  local setup_script="${REPO_ROOT}/src/tts/irodori_tts_lite/setup.sh"
+
+  if [[ "${INSTALL_IRODORI_TTS_LITE}" != "1" ]]; then
+    return
+  fi
+
+  if [[ ! -x "${setup_script}" ]]; then
+    echo "[ERROR] Irodori-TTS-Lite setup script not found: ${setup_script}" >&2
+    echo "[HINT] Run git submodule update --init --recursive first." >&2
+    exit 1
+  fi
+
+  log "Installing isolated Irodori-TTS-Lite uv environment"
+  run_as_target_user "${setup_script}"
+}
+
 install_libtorch() {
   local archive=""
   local download_url=""
@@ -844,6 +866,7 @@ main() {
   install_ibus_mozc
   install_uv
   install_yolo_cuda_venv
+  install_irodori_tts_lite
   install_libtorch
   install_livrealsense
   install_livox_sdk2
