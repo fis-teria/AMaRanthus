@@ -74,6 +74,9 @@ class UiState:
     obstacle_count: int
     mode: str
     gps_status: str
+    route_pointcloud_points: List[PointCloudPoint] = field(default_factory=list)
+    route_path_points: List[PointCloudPoint] = field(default_factory=list)
+    e2e_path_points: List[PointCloudPoint] = field(default_factory=list)
     shadow: ShadowMetrics = field(default_factory=ShadowMetrics)
     camera_frame: Optional[CameraFrame] = None
     phone_current: Optional[GeoPoint] = None

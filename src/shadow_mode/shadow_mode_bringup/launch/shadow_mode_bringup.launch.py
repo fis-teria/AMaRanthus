@@ -162,6 +162,10 @@ def generate_launch_description():
                 "tls_cert_file": LaunchConfiguration("phone_bridge_tls_cert_file"),
                 "tls_key_file": LaunchConfiguration("phone_bridge_tls_key_file"),
                 "osrm_service_url": LaunchConfiguration("phone_bridge_osrm_service_url"),
+                "fix_stale_timeout_sec": ParameterValue(
+                    LaunchConfiguration("phone_bridge_fix_stale_timeout_sec"),
+                    value_type=float,
+                ),
                 "fix_topic": LaunchConfiguration("phone_bridge_fix_topic"),
                 "goal_topic": LaunchConfiguration("phone_bridge_goal_topic"),
                 "route_path_topic": LaunchConfiguration("gui_route_path_topic"),
@@ -213,6 +217,26 @@ def generate_launch_description():
                 ),
                 "correction_gain": ParameterValue(
                     LaunchConfiguration("localization_correction_gain"), value_type=float
+                ),
+                "dynamic_correction_gain": ParameterValue(
+                    LaunchConfiguration("localization_dynamic_correction_gain"),
+                    value_type=bool,
+                ),
+                "low_speed_threshold_mps": ParameterValue(
+                    LaunchConfiguration("localization_low_speed_threshold_mps"),
+                    value_type=float,
+                ),
+                "high_speed_threshold_mps": ParameterValue(
+                    LaunchConfiguration("localization_high_speed_threshold_mps"),
+                    value_type=float,
+                ),
+                "high_speed_correction_gain": ParameterValue(
+                    LaunchConfiguration("localization_high_speed_correction_gain"),
+                    value_type=float,
+                ),
+                "high_speed_max_correction_step_m": ParameterValue(
+                    LaunchConfiguration("localization_high_speed_max_correction_step_m"),
+                    value_type=float,
                 ),
             },
         ],
@@ -532,7 +556,32 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "localization_correction_gain",
                 default_value="0.08",
-                description="GNSS 残差を LiDAR odometry に反映する低周波ゲイン。",
+                description="低速時に GNSS 残差を LiDAR odometry に反映する低周波ゲイン。",
+            ),
+            DeclareLaunchArgument(
+                "localization_dynamic_correction_gain",
+                default_value="true",
+                description="速度に応じて GNSS 補正ゲインと補正ステップを下げます。",
+            ),
+            DeclareLaunchArgument(
+                "localization_low_speed_threshold_mps",
+                default_value="3.0",
+                description="この速度以下では低速用 GNSS 補正ゲインを使います。",
+            ),
+            DeclareLaunchArgument(
+                "localization_high_speed_threshold_mps",
+                default_value="20.0",
+                description="この速度以上では高速用 GNSS 補正ゲインを使います。",
+            ),
+            DeclareLaunchArgument(
+                "localization_high_speed_correction_gain",
+                default_value="0.01",
+                description="高速時に使う GNSS 残差補正ゲイン。",
+            ),
+            DeclareLaunchArgument(
+                "localization_high_speed_max_correction_step_m",
+                default_value="0.05",
+                description="高速時の 1 odom callback あたり最大 GNSS 補正量 [m]。",
             ),
             DeclareLaunchArgument(
                 "ego_output_frame",
@@ -648,6 +697,11 @@ def generate_launch_description():
                 "phone_bridge_osrm_service_url",
                 default_value="https://routing.openstreetmap.de/routed-car/route/v1/driving",
                 description="OSRM route API endpoint。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_fix_stale_timeout_sec",
+                default_value="3.0",
+                description="スマホ現在地を fresh とみなして publish する最大 age [s]。",
             ),
             DeclareLaunchArgument(
                 "phone_bridge_fix_topic",

@@ -12,6 +12,7 @@
 - レーザースキャンデータの可視化
 - lane / road edge のオーバーレイ表示
 - 検知された obstacle マーカー表示
+- GUI内ボタンによるROS bag録画・再生（点群、カメラ画像、Odometry/GPS、TF）
 - ダーク / ライトテーマ切り替え
 
 ## 地図について
@@ -87,6 +88,21 @@ uv run main.py
 ./gui/run_gui.sh
 ```
 
+`gui/run_gui.sh` は既定で `src/tts/irodori_tts_lite` の HTTP backend も起動します。既に `127.0.0.1:8766` で起動済みなら再利用し、スクリプトが起動した backend は GUI 終了時に停止します。TTS 環境が未セットアップの場合は警告だけ出して GUI 起動は継続します。
+
+```bash
+ENABLE_IRODORI_TTS_BACKEND=0 ./gui/run_gui.sh
+IRODORI_TTS_BACKEND_PORT=8767 ./gui/run_gui.sh
+IRODORI_TTS_CONFIG=/path/to/config.yaml ./gui/run_gui.sh
+```
+
+phone location bridge の OSRM ルートに `guidance_steps` がある場合、GUI は既定で Irodori backend に次の案内を渡し、生成された音声を再生します。案内ステップが進んだ時と、次の交差点などの約 300 m 手前で読み上げます。
+
+```bash
+ENABLE_ROUTE_VOICE_GUIDANCE=0 ./gui/run_gui.sh
+ROUTE_VOICE_PREANNOUNCE_DISTANCE_M=200 ./gui/run_gui.sh
+```
+
 GUI 右側の `Camera`、`Scan`、`Lane`、`Objects`、`Speed`、`Mode`、`GPS`、`Shadow` ボタンで、表示データを項目ごとに Demo / ROS2 へ切り替えできます。各ボタンは、対応する ROS2 トピックのメッセージを実際に受信するまで無効です。
 
 起動時点から ROS2 優先にしたい場合は、以下のように指定します。トピックが届くまでは Demo 表示で起動し、受信できた項目から ROS2 表示に切り替わります。
@@ -140,17 +156,37 @@ uv run main.py \
 - `--ros-camera-display-max-edge-px`: Camera view に渡す前に画像の長辺をこの値へ縮小します。`0` で縮小を無効化します。
 - `--ros-camera-info-topic`: `sensor_msgs/msg/CameraInfo`
 - `--ros-pointcloud-topic`: `sensor_msgs/msg/PointCloud2`。既定は FAST-LIO の `/cloud_registered` です。
+- `--ros-pointcloud-odom-topic`: `nav_msgs/msg/Odometry`。既定は FAST-LIO の `/Odometry` です。PointCloud view はこのposeで `/cloud_registered` を現在車両基準へ戻して、点群が走行位置に合わせて表示範囲外へ流れないようにします。
+- `--no-ros-pointcloud-stabilize-with-odom`: PointCloud view の odometry 補正を無効化し、PointCloud2 の座標をそのまま描画します。
 - `--ros-pointcloud-max-points`: PointCloud view に渡す最大点数。既定は `2500` です。
 - `--ros-pointcloud-min-update-interval-sec`: PointCloud view 表示中に別 worker で点群を parse する最短更新間隔。既定は `0.2` 秒です。
 - `--ros-pointcloud-max-range-m`: PointCloud view に渡す最大水平距離。既定は `80.0` m です。3D view の表示レンジもこの値で固定します。
 - `--ros-pointcloud-z-min-m` / `--ros-pointcloud-z-max-m`: PointCloud view に渡す高さ範囲。既定は `-3.0` m から `3.0` m です。
+- `--ros-route-pointcloud-topic`: PointCloud view に重ねる route publisher 由来の `sensor_msgs/msg/PointCloud2`。既定は `/shadow/route/pointcloud` です。
+- `--ros-route-pointcloud-max-points`: route pointcloud overlay に渡す最大点数。既定は `1500` です。
+- `--ros-route-path-topic`: PointCloud view に重ねる route path `nav_msgs/msg/Path`。既定は `/shadow/route/gui_path` です。
+- `--ros-e2e-path-topic`: PointCloud view に重ねる TransFuser 予測経路 `nav_msgs/msg/Path`。既定は `/shadow/e2e/path` です。
 - `--ros-scan-topic`: `sensor_msgs/msg/LaserScan`
 - `--ros-lane-topic`: `sensor_msgs/msg/LaserScan`
 - `--ros-speed-topic`: `std_msgs/msg/Float32`
 - `--ros-mode-topic`: `std_msgs/msg/String`
 - `--ros-gps-topic`: `std_msgs/msg/String`
+- `--tts-backend-url`: Irodori-TTS-Lite backend URL。既定は `http://127.0.0.1:8766` です。
+- `--disable-route-voice-guidance`: OSRM / phone route guidance の音声案内を無効化します。
+- `--route-voice-preannounce-distance-m`: 次の案内地点に近づいた時の事前読み上げ距離。既定は `300.0` m です。
 - `--gpu-monitor-interval-sec`: `nvidia-smi` でGPU使用率を読む周期。既定は `1.0` 秒です。
 - `--disable-gpu-monitor`: GPU監視を無効化します。`nvidia-smi` が使えない環境でもGUI起動自体は継続します。
+- `--rosbag-record-dir`: GUIの `ROS bag` パネルから録画したbagを保存するディレクトリ。既定は `Data/gui_rosbags` です。
+- `--rosbag-record-topic`: 既定の点群、カメラ、Odometry/GPS、TFに加えて録画するtopic。複数指定できます。
+- `--rosbag-record-preset`: 起動時に選択する録画プリセット。既定は `E2E input` です。
+
+GUIの `ROS bag` パネルでは、録画プリセットを選んでから `録画` で `ros2 bag record` を開始し、`録画停止` でSIGINT停止してmetadataを書き出します。`E2E input` はShadowMode E2E replay向けの入力topicだけを記録し、`GUI replay` はGUI表示確認向けにoverlayやshadow出力も含めます。`再生` は最後に録画したbag、または `選択` で指定したbagディレクトリを `ros2 bag play` します。`gui/run_gui.sh` からは保存先、起動時プリセット、追加topicを環境変数で上書きできます。
+
+```bash
+ROSBAG_RECORD_DIR=/path/to/bags ./gui/run_gui.sh
+ROSBAG_RECORD_PRESET="GUI replay" ./gui/run_gui.sh
+ROSBAG_RECORD_EXTRA_TOPICS="/vehicle/twist /diagnostics" ./gui/run_gui.sh
+```
 
 shadow-mode 欄は以下の `std_msgs/msg/Float32` と `std_msgs/msg/String` を既定で購読します。
 
@@ -166,7 +202,7 @@ shadow-mode 欄は以下の `std_msgs/msg/Float32` と `std_msgs/msg/String` を
 - `/shadow/metrics/intervention_score`
 - `/shadow/metrics/summary`
 
-`gui/run_gui.sh` から起動する場合は、`GUI_THEME=light ./gui/run_gui.sh`、`ROS_CAMERA_IMAGE_TOPIC=/foo ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC=/bar ROS_CAMERA_DISPLAY_MAX_EDGE_PX=960 ROS_CAMERA_INFO_TOPIC=/bar ./gui/run_gui.sh`、`ROS_CAMERA_RAW_OVERLAY_FALLBACK=1 ./gui/run_gui.sh`、`ROS_POINTCLOUD_TOPIC=/cloud_registered ROS_POINTCLOUD_MAX_POINTS=1800 ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC=0.25 ROS_POINTCLOUD_MAX_RANGE_M=60 ./gui/run_gui.sh`、`ROS_SHADOW_INTERVENTION_SCORE_TOPIC=/foo ./gui/run_gui.sh` のように環境変数で上書きできます。
+`gui/run_gui.sh` から起動する場合は、`GUI_THEME=light ./gui/run_gui.sh`、`ROS_CAMERA_IMAGE_TOPIC=/foo ROS_CAMERA_COMPRESSED_OVERLAY_TOPIC=/bar ROS_CAMERA_DISPLAY_MAX_EDGE_PX=960 ROS_CAMERA_INFO_TOPIC=/bar ./gui/run_gui.sh`、`ROS_CAMERA_RAW_OVERLAY_FALLBACK=1 ./gui/run_gui.sh`、`ROS_POINTCLOUD_TOPIC=/cloud_registered ROS_POINTCLOUD_ODOM_TOPIC=/Odometry ROS_POINTCLOUD_MAX_POINTS=1800 ROS_POINTCLOUD_MIN_UPDATE_INTERVAL_SEC=0.25 ROS_POINTCLOUD_MAX_RANGE_M=60 ./gui/run_gui.sh`、`ROS_ROUTE_POINTCLOUD_TOPIC=/shadow/route/pointcloud ROS_ROUTE_PATH_TOPIC=/shadow/route/gui_path ROS_E2E_PATH_TOPIC=/shadow/e2e/path ./gui/run_gui.sh`、`ROS_POINTCLOUD_STABILIZE_WITH_ODOM=0 ./gui/run_gui.sh`、`ROUTE_VOICE_PREANNOUNCE_DISTANCE_M=200 ./gui/run_gui.sh`、`ENABLE_ROUTE_VOICE_GUIDANCE=0 ./gui/run_gui.sh`、`ROS_SHADOW_INTERVENTION_SCORE_TOPIC=/foo ./gui/run_gui.sh` のように環境変数で上書きできます。
 
 GUI の見た目は `gui/config/ui.yaml` で調整できます。必要なら `--ui-config` で別ファイルも指定できます。
 

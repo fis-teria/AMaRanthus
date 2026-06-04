@@ -1,5 +1,5 @@
 render:
-  max_range_m: 20.0
+  max_range_m: 50.0
   dynamic_range_enabled: true
   dynamic_range_min_m: 15.0
   dynamic_range_max_m: 80.0

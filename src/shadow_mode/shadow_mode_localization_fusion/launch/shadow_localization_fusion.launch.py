@@ -26,6 +26,11 @@ def generate_launch_description():
             DeclareLaunchArgument("fix_timeout_sec", default_value="3.0"),
             DeclareLaunchArgument("max_fix_accuracy_m", default_value="25.0"),
             DeclareLaunchArgument("correction_gain", default_value="0.08"),
+            DeclareLaunchArgument("dynamic_correction_gain", default_value="true"),
+            DeclareLaunchArgument("low_speed_threshold_mps", default_value="3.0"),
+            DeclareLaunchArgument("high_speed_threshold_mps", default_value="20.0"),
+            DeclareLaunchArgument("high_speed_correction_gain", default_value="0.01"),
+            DeclareLaunchArgument("high_speed_max_correction_step_m", default_value="0.05"),
             Node(
                 package="shadow_mode_localization_fusion",
                 executable="shadow_localization_fusion_node.py",
@@ -48,6 +53,22 @@ def generate_launch_description():
                         ),
                         "correction_gain": ParameterValue(
                             LaunchConfiguration("correction_gain"), value_type=float
+                        ),
+                        "dynamic_correction_gain": ParameterValue(
+                            LaunchConfiguration("dynamic_correction_gain"), value_type=bool
+                        ),
+                        "low_speed_threshold_mps": ParameterValue(
+                            LaunchConfiguration("low_speed_threshold_mps"), value_type=float
+                        ),
+                        "high_speed_threshold_mps": ParameterValue(
+                            LaunchConfiguration("high_speed_threshold_mps"), value_type=float
+                        ),
+                        "high_speed_correction_gain": ParameterValue(
+                            LaunchConfiguration("high_speed_correction_gain"), value_type=float
+                        ),
+                        "high_speed_max_correction_step_m": ParameterValue(
+                            LaunchConfiguration("high_speed_max_correction_step_m"),
+                            value_type=float,
                         ),
                     },
                 ],

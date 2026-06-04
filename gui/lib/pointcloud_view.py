@@ -21,6 +21,9 @@ class PointCloudView(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
         self.points: List[PointCloudPoint] = []
+        self.route_pointcloud_points: List[PointCloudPoint] = []
+        self.route_path_points: List[PointCloudPoint] = []
+        self.e2e_path_points: List[PointCloudPoint] = []
         self.max_range_m = max(5.0, float(fixed_range_m))
         self.z_min_m = float(fixed_z_min_m)
         self.z_max_m = float(fixed_z_max_m)
@@ -37,6 +40,24 @@ class PointCloudView(QWidget):
         if points is self.points:
             return
         self.points = points
+        self.update()
+
+    def set_route_layers(
+        self,
+        *,
+        route_pointcloud_points: List[PointCloudPoint],
+        route_path_points: List[PointCloudPoint],
+        e2e_path_points: List[PointCloudPoint],
+    ) -> None:
+        if (
+            route_pointcloud_points is self.route_pointcloud_points
+            and route_path_points is self.route_path_points
+            and e2e_path_points is self.e2e_path_points
+        ):
+            return
+        self.route_pointcloud_points = route_pointcloud_points
+        self.route_path_points = route_path_points
+        self.e2e_path_points = e2e_path_points
         self.update()
 
     def _world_point(self, point: PointCloudPoint) -> tuple[float, float, float]:
@@ -195,6 +216,74 @@ class PointCloudView(QWidget):
             painter.drawPoint(view_point)
         painter.restore()
 
+    def draw_route_pointcloud(self, painter: QPainter) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        pen = QPen(QColor(255, 214, 80, 230), 4)
+        painter.setPen(pen)
+        for point in self.route_pointcloud_points:
+            projected = self._project(self._world_point(point))
+            if projected is None:
+                continue
+            painter.drawPoint(projected[0])
+        painter.restore()
+
+    def draw_path_layer(
+        self,
+        painter: QPainter,
+        points: List[PointCloudPoint],
+        *,
+        line_color: QColor,
+        point_color: QColor,
+        width: int,
+    ) -> None:
+        if not points:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        line_pen = QPen(line_color, width)
+        line_pen.setCapStyle(Qt.RoundCap)
+        line_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(line_pen)
+
+        previous = None
+        projected_points = []
+        for point in points:
+            projected = self._project(self._world_point(point))
+            if projected is None:
+                previous = None
+                continue
+            view_point = projected[0]
+            projected_points.append(view_point)
+            if previous is not None:
+                painter.drawLine(previous, view_point)
+            previous = view_point
+
+        painter.setBrush(QBrush(point_color))
+        painter.setPen(QPen(point_color, max(2, width - 1)))
+        for view_point in projected_points:
+            painter.drawPoint(view_point)
+
+        painter.restore()
+
+    def draw_route_layers(self, painter: QPainter) -> None:
+        self.draw_route_pointcloud(painter)
+        self.draw_path_layer(
+            painter,
+            self.route_path_points,
+            line_color=QColor(90, 235, 140, 230),
+            point_color=QColor(185, 255, 210, 235),
+            width=4,
+        )
+        self.draw_path_layer(
+            painter,
+            self.e2e_path_points,
+            line_color=QColor(60, 205, 255, 240),
+            point_color=QColor(210, 246, 255, 245),
+            width=5,
+        )
+
     def draw_overlay(self, painter: QPainter) -> None:
         painter.save()
         painter.setPen(QColor(232, 238, 245))
@@ -206,8 +295,11 @@ class PointCloudView(QWidget):
 
         painter.drawText(12, 24, "PointCloud 3D view")
         painter.drawText(12, 46, f"points: {len(self.points)}")
-        painter.drawText(12, 68, f"range: +/-{self.max_range_m:.0f} m")
-        painter.drawText(12, 90, f"height: {self.z_min_m:.2f}m - {self.z_max_m:.2f}m")
+        painter.drawText(12, 68, f"route cloud: {len(self.route_pointcloud_points)}")
+        painter.drawText(12, 90, f"route path: {len(self.route_path_points)}")
+        painter.drawText(12, 112, f"e2e path: {len(self.e2e_path_points)}")
+        painter.drawText(12, 134, f"range: +/-{self.max_range_m:.0f} m")
+        painter.drawText(12, 156, f"height: {self.z_min_m:.2f}m - {self.z_max_m:.2f}m")
         painter.restore()
 
     def mousePressEvent(self, event):
@@ -247,6 +339,7 @@ class PointCloudView(QWidget):
         self._projection_basis = self._camera_basis()
         self.draw_background(painter)
         self.draw_points(painter)
+        self.draw_route_layers(painter)
         self.draw_vehicle(painter)
         self.draw_overlay(painter)
         self._projection_basis = None

@@ -119,6 +119,39 @@ class DemoDataSource(QObject):
 
         return points
 
+    def _generate_fake_route_path(self) -> list[PointCloudPoint]:
+        return [
+            PointCloudPoint(
+                x_m=distance_m,
+                y_m=0.45 * math.sin(self._t * 0.3 + distance_m * 0.09),
+                z_m=0.08,
+            )
+            for distance_m in [index * 1.8 for index in range(0, 26)]
+        ]
+
+    def _generate_fake_e2e_path(self) -> list[PointCloudPoint]:
+        return [
+            PointCloudPoint(
+                x_m=distance_m,
+                y_m=0.7 * math.sin(self._t * 0.4 + distance_m * 0.12) + 0.25,
+                z_m=0.16,
+            )
+            for distance_m in [index * 1.5 for index in range(1, 16)]
+        ]
+
+    def _generate_fake_route_pointcloud(self) -> list[PointCloudPoint]:
+        points = []
+        for path_point in self._generate_fake_route_path():
+            for lateral_offset in (-0.9, -0.45, 0.0, 0.45, 0.9):
+                points.append(
+                    PointCloudPoint(
+                        x_m=path_point.x_m,
+                        y_m=path_point.y_m + lateral_offset,
+                        z_m=0.02,
+                    )
+                )
+        return points
+
     def _publish_next_state(self) -> None:
         if self._callback is None:
             return
@@ -127,6 +160,9 @@ class DemoDataSource(QObject):
         scan_points = self._generate_fake_scan()
         lane_points = self._generate_fake_lane()
         pointcloud_points = self._generate_fake_pointcloud()
+        route_path_points = self._generate_fake_route_path()
+        route_pointcloud_points = self._generate_fake_route_pointcloud()
+        e2e_path_points = self._generate_fake_e2e_path()
         objects = self._generate_fake_objects()
         min_distance = compute_min_distance(scan_points)
         speed_kmh = 8.0 + 2.5 * math.sin(self._t * 0.7)
@@ -151,6 +187,9 @@ class DemoDataSource(QObject):
                 scan_points=scan_points,
                 lane_points=lane_points,
                 pointcloud_points=pointcloud_points,
+                route_pointcloud_points=route_pointcloud_points,
+                route_path_points=route_path_points,
+                e2e_path_points=e2e_path_points,
                 objects=objects,
                 speed_kmh=speed_kmh,
                 min_distance_m=min_distance,
@@ -229,11 +268,17 @@ class Ros2DataSource(QObject):
         camera_display_max_edge_px: int,
         camera_info_topic: str,
         pointcloud_topic: str,
+        pointcloud_odom_topic: str,
+        pointcloud_stabilize_with_odom: bool,
         pointcloud_max_points: int,
         pointcloud_min_update_interval_sec: float,
         pointcloud_max_range_m: float,
         pointcloud_z_min_m: float,
         pointcloud_z_max_m: float,
+        route_pointcloud_topic: str,
+        route_pointcloud_max_points: int,
+        route_path_topic: str,
+        e2e_path_topic: str,
         scan_topic: str,
         lane_topic: str,
         objects_topic: str,
@@ -267,6 +312,8 @@ class Ros2DataSource(QObject):
         self._camera_display_max_edge_px = max(0, int(camera_display_max_edge_px))
         self._camera_info_topic = camera_info_topic
         self._pointcloud_topic = pointcloud_topic
+        self._pointcloud_odom_topic = pointcloud_odom_topic
+        self._pointcloud_stabilize_with_odom = bool(pointcloud_stabilize_with_odom)
         self._pointcloud_max_points = max(100, int(pointcloud_max_points))
         self._pointcloud_min_update_interval_sec = max(
             0.0, float(pointcloud_min_update_interval_sec)
@@ -274,6 +321,10 @@ class Ros2DataSource(QObject):
         self._pointcloud_max_range_m = max(1.0, float(pointcloud_max_range_m))
         self._pointcloud_z_min_m = float(pointcloud_z_min_m)
         self._pointcloud_z_max_m = float(pointcloud_z_max_m)
+        self._route_pointcloud_topic = route_pointcloud_topic
+        self._route_pointcloud_max_points = max(10, int(route_pointcloud_max_points))
+        self._route_path_topic = route_path_topic
+        self._e2e_path_topic = e2e_path_topic
         self._scan_topic = scan_topic
         self._lane_topic = lane_topic
         self._objects_topic = objects_topic
@@ -322,10 +373,17 @@ class Ros2DataSource(QObject):
         self._pointcloud_messages = 0
         self._pointcloud_processed_messages = 0
         self._pointcloud_parse_errors = 0
+        self._route_pointcloud_messages = 0
+        self._route_pointcloud_parse_errors = 0
+        self._route_path_messages = 0
+        self._e2e_path_messages = 0
         self._last_pointcloud_update_at = 0.0
         self._latest_pointcloud_msg = None
         self._latest_pointcloud_seq = 0
         self._processed_pointcloud_seq = 0
+        self._pointcloud_odom_messages = 0
+        self._pointcloud_pose: Optional[tuple[float, float, float, float]] = None
+        self._pointcloud_pose_missing_logged = False
         self._pointcloud_view_enabled = False
         self._pointcloud_lock = threading.Lock()
         self._camera_messages = 0
@@ -336,6 +394,9 @@ class Ros2DataSource(QObject):
         self._camera_info_messages = 0
         self._camera_frame: Optional[CameraFrame] = None
         self._pointcloud_points: list[PointCloudPoint] = []
+        self._route_pointcloud_points: list[PointCloudPoint] = []
+        self._route_path_points: list[PointCloudPoint] = []
+        self._e2e_path_points: list[PointCloudPoint] = []
         self._scan_points: list[QPointF] = []
         self._lane_points: list[QPointF] = []
         self._objects: list[DetectedObject] = []
@@ -387,13 +448,14 @@ class Ros2DataSource(QObject):
             )
             from sensor_msgs_py import point_cloud2
             from std_msgs.msg import Float32, String
+            from nav_msgs.msg import Odometry, Path
         except ImportError as exc:
             self._log(
                 "ERROR",
-                "ROS2 imports failed: rclpy, sensor_msgs, sensor_msgs_py, std_msgs, and numpy are required.",
+                "ROS2 imports failed: rclpy, sensor_msgs, sensor_msgs_py, std_msgs, nav_msgs, and numpy are required.",
             )
             raise RuntimeError(
-                "ROS2 mode requires rclpy, sensor_msgs, sensor_msgs_py, and std_msgs to be available."
+                "ROS2 mode requires rclpy, sensor_msgs, sensor_msgs_py, std_msgs, and nav_msgs to be available."
             ) from exc
 
         self._log("INFO", "ROS2 data source starting.")
@@ -457,6 +519,34 @@ class Ros2DataSource(QObject):
             self._on_pointcloud,
             pointcloud_qos,
         )
+        if self._route_pointcloud_topic:
+            node.create_subscription(
+                PointCloud2,
+                self._route_pointcloud_topic,
+                self._on_route_pointcloud,
+                pointcloud_qos,
+            )
+        if self._route_path_topic:
+            node.create_subscription(
+                Path,
+                self._route_path_topic,
+                self._on_route_path,
+                best_effort_qos,
+            )
+        if self._e2e_path_topic:
+            node.create_subscription(
+                Path,
+                self._e2e_path_topic,
+                self._on_e2e_path,
+                best_effort_qos,
+            )
+        if self._pointcloud_stabilize_with_odom and self._pointcloud_odom_topic:
+            node.create_subscription(
+                Odometry,
+                self._pointcloud_odom_topic,
+                self._on_pointcloud_odom,
+                best_effort_qos,
+            )
         node.create_subscription(LaserScan, self._scan_topic, self._on_scan, 10)
         node.create_subscription(LaserScan, self._lane_topic, self._on_lane, 10)
         node.create_subscription(String, self._objects_topic, self._on_objects, 10)
@@ -565,6 +655,19 @@ class Ros2DataSource(QObject):
             self._log("INFO", "Raw camera overlay fallback subscription disabled")
         self._log("INFO", f"Subscribed camera info topic: {self._camera_info_topic}")
         self._log("INFO", f"Subscribed PointCloud2 topic: {self._pointcloud_topic}")
+        if self._pointcloud_stabilize_with_odom and self._pointcloud_odom_topic:
+            self._log(
+                "INFO",
+                f"PointCloud stabilization enabled with odometry topic: {self._pointcloud_odom_topic}",
+            )
+        else:
+            self._log("INFO", "PointCloud odometry stabilization disabled")
+        if self._route_pointcloud_topic:
+            self._log("INFO", f"Subscribed route PointCloud2 topic: {self._route_pointcloud_topic}")
+        if self._route_path_topic:
+            self._log("INFO", f"Subscribed route Path topic: {self._route_path_topic}")
+        if self._e2e_path_topic:
+            self._log("INFO", f"Subscribed E2E Path topic: {self._e2e_path_topic}")
         self._log("INFO", f"Subscribed LaserScan topics: {self._scan_topic}, {self._lane_topic}")
         self._log(
             "INFO",
@@ -635,10 +738,11 @@ class Ros2DataSource(QObject):
             with self._pointcloud_lock:
                 msg = self._latest_pointcloud_msg
                 seq = self._latest_pointcloud_seq
+                pose = self._pointcloud_pose
             if msg is None or seq == self._processed_pointcloud_seq:
                 continue
 
-            self._process_pointcloud_message(msg, seq, now)
+            self._process_pointcloud_message(msg, seq, now, pose)
 
     def _spin_once(self) -> None:
         if not self._node or self._rclpy is None:
@@ -677,6 +781,9 @@ class Ros2DataSource(QObject):
                 scan_points=self._scan_points,
                 lane_points=self._lane_points,
                 pointcloud_points=self._pointcloud_points,
+                route_pointcloud_points=self._route_pointcloud_points,
+                route_path_points=self._route_path_points,
+                e2e_path_points=self._e2e_path_points,
                 objects=self._objects,
                 speed_kmh=self._speed_kmh,
                 min_distance_m=compute_min_distance(self._scan_points),
@@ -761,13 +868,128 @@ class Ros2DataSource(QObject):
                 ),
             )
 
-    def _process_pointcloud_message(self, msg, seq: int, now: float) -> None:
+    def _on_route_pointcloud(self, msg) -> None:
+        self._mark_live_data("pointcloud")
+        self._route_pointcloud_messages += 1
+
+        max_points = self._route_pointcloud_max_points
+        total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
+        stride = max(1, math.ceil(total_points / max_points))
+        try:
+            points = self._sample_pointcloud(
+                msg,
+                stride=stride,
+                max_points=max_points,
+                pose=None,
+            )
+        except Exception as exc:
+            self._route_pointcloud_parse_errors += 1
+            self._log(
+                "ERROR",
+                (
+                    "Route PointCloud2 parse failed "
+                    f"({self._route_pointcloud_parse_errors}): {type(exc).__name__}: {exc}"
+                ),
+            )
+            points = []
+
+        self._route_pointcloud_points = points
+        if self._route_pointcloud_messages == 1 or self._route_pointcloud_messages % 100 == 0:
+            self._log(
+                "INFO",
+                (
+                    f"Route PointCloud2 frame {self._route_pointcloud_messages}: "
+                    f"kept {len(points)} points, stride={stride}, max_points={max_points}"
+                ),
+            )
+        self._emit_state()
+
+    def _on_route_path(self, msg) -> None:
+        self._mark_live_data("pointcloud")
+        self._route_path_messages += 1
+        self._route_path_points = self._path_to_points(msg)
+        if self._route_path_messages == 1 or self._route_path_messages % 100 == 0:
+            self._log(
+                "INFO",
+                (
+                    f"Route Path frame {self._route_path_messages}: "
+                    f"kept {len(self._route_path_points)} poses"
+                ),
+            )
+        self._emit_state()
+
+    def _on_e2e_path(self, msg) -> None:
+        self._mark_live_data("pointcloud")
+        self._e2e_path_messages += 1
+        self._e2e_path_points = self._path_to_points(msg)
+        if self._e2e_path_messages == 1 or self._e2e_path_messages % 100 == 0:
+            self._log(
+                "INFO",
+                (
+                    f"E2E Path frame {self._e2e_path_messages}: "
+                    f"kept {len(self._e2e_path_points)} poses"
+                ),
+            )
+        self._emit_state()
+
+    def _on_pointcloud_odom(self, msg) -> None:
+        position = msg.pose.pose.position
+        orientation = msg.pose.pose.orientation
+        yaw = self._yaw_from_quaternion(
+            orientation.x,
+            orientation.y,
+            orientation.z,
+            orientation.w,
+        )
+        with self._pointcloud_lock:
+            self._pointcloud_pose = (
+                float(position.x),
+                float(position.y),
+                float(position.z),
+                yaw,
+            )
+        self._pointcloud_odom_messages += 1
+        if self._pointcloud_odom_messages == 1:
+            self._log("INFO", "PointCloud odometry stabilization received first pose")
+
+    def _path_to_points(self, msg) -> list[PointCloudPoint]:
+        poses = list(getattr(msg, "poses", []) or [])
+        if not poses:
+            return []
+        max_points = self._route_pointcloud_max_points
+        stride = max(1, math.ceil(len(poses) / max_points))
+        points = []
+        for index, pose_stamped in enumerate(poses):
+            if index % stride != 0:
+                continue
+            position = pose_stamped.pose.position
+            x_m = float(position.x)
+            y_m = float(position.y)
+            z_m = float(position.z)
+            if self._pointcloud_point_is_visible(x_m, y_m, z_m):
+                points.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
+            if len(points) >= max_points:
+                break
+        return points
+
+    def _process_pointcloud_message(
+        self,
+        msg,
+        seq: int,
+        now: float,
+        pose: Optional[tuple[float, float, float, float]],
+    ) -> None:
         max_points = self._pointcloud_max_points
         total_points = int(getattr(msg, "width", 0)) * max(1, int(getattr(msg, "height", 1)))
         stride = max(1, math.ceil(total_points / max_points))
 
         try:
-            points = self._sample_pointcloud(msg, stride=stride, max_points=max_points)
+            points = self._sample_pointcloud(
+                msg,
+                stride=stride,
+                max_points=max_points,
+                pose=pose,
+            )
         except Exception as exc:
             self._pointcloud_parse_errors += 1
             self._log(
@@ -789,13 +1011,26 @@ class Ros2DataSource(QObject):
                 "INFO",
                 (
                     f"PointCloud2 parsed frame {self._pointcloud_processed_messages}: "
-                    f"kept {len(points)} points, stride={stride}, max_points={max_points}"
+                    f"kept {len(points)} points, stride={stride}, max_points={max_points}, "
+                    f"stabilized={'yes' if self._pointcloud_pose_enabled(pose) else 'no'}"
                 ),
             )
         self._emit_state()
 
-    def _sample_pointcloud(self, msg, *, stride: int, max_points: int) -> list[PointCloudPoint]:
-        points = self._sample_pointcloud_direct(msg, stride=stride, max_points=max_points)
+    def _sample_pointcloud(
+        self,
+        msg,
+        *,
+        stride: int,
+        max_points: int,
+        pose: Optional[tuple[float, float, float, float]],
+    ) -> list[PointCloudPoint]:
+        points = self._sample_pointcloud_direct(
+            msg,
+            stride=stride,
+            max_points=max_points,
+            pose=pose,
+        )
         if points is not None:
             return points
 
@@ -809,6 +1044,7 @@ class Ros2DataSource(QObject):
             if index % stride != 0:
                 continue
             x_m, y_m, z_m = self._extract_xyz(point)
+            x_m, y_m, z_m = self._stabilize_pointcloud_xyz(x_m, y_m, z_m, pose)
             if self._pointcloud_point_is_visible(x_m, y_m, z_m):
                 sampled.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
             if len(sampled) >= max_points:
@@ -821,6 +1057,7 @@ class Ros2DataSource(QObject):
         *,
         stride: int,
         max_points: int,
+        pose: Optional[tuple[float, float, float, float]],
     ) -> Optional[list[PointCloudPoint]]:
         field_map = {field.name: field for field in getattr(msg, "fields", [])}
         xyz_fields = [field_map.get(name) for name in ("x", "y", "z")]
@@ -857,6 +1094,7 @@ class Ros2DataSource(QObject):
                 z_m = float(unpackers[2][1].unpack_from(data, base_offset + unpackers[2][0])[0])
             except (struct.error, ValueError):
                 continue
+            x_m, y_m, z_m = self._stabilize_pointcloud_xyz(x_m, y_m, z_m, pose)
             if self._pointcloud_point_is_visible(x_m, y_m, z_m):
                 sampled.append(PointCloudPoint(x_m=x_m, y_m=y_m, z_m=z_m))
             if len(sampled) >= max_points:
@@ -874,6 +1112,52 @@ class Ros2DataSource(QObject):
             7: "f",
             8: "d",
         }.get(int(datatype))
+
+    def _pointcloud_pose_enabled(
+        self,
+        pose: Optional[tuple[float, float, float, float]],
+    ) -> bool:
+        return self._pointcloud_stabilize_with_odom and pose is not None
+
+    def _stabilize_pointcloud_xyz(
+        self,
+        x_m: Optional[float],
+        y_m: Optional[float],
+        z_m: Optional[float],
+        pose: Optional[tuple[float, float, float, float]],
+    ) -> tuple[Optional[float], Optional[float], Optional[float]]:
+        if not self._pointcloud_stabilize_with_odom:
+            return x_m, y_m, z_m
+        if pose is None:
+            if not self._pointcloud_pose_missing_logged:
+                self._pointcloud_pose_missing_logged = True
+                self._log(
+                    "WARN",
+                    "PointCloud odometry pose is not available yet; rendering raw PointCloud2 coordinates.",
+                )
+            return x_m, y_m, z_m
+        if (
+            x_m is None
+            or y_m is None
+            or z_m is None
+            or not all(math.isfinite(v) for v in (x_m, y_m, z_m))
+        ):
+            return x_m, y_m, z_m
+
+        origin_x_m, origin_y_m, origin_z_m, yaw_rad = pose
+        dx = x_m - origin_x_m
+        dy = y_m - origin_y_m
+        cos_yaw = math.cos(yaw_rad)
+        sin_yaw = math.sin(yaw_rad)
+        local_x_m = cos_yaw * dx + sin_yaw * dy
+        local_y_m = -sin_yaw * dx + cos_yaw * dy
+        local_z_m = z_m - origin_z_m
+        return local_x_m, local_y_m, local_z_m
+
+    def _yaw_from_quaternion(self, x: float, y: float, z: float, w: float) -> float:
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
     def _pointcloud_point_is_visible(
         self,
@@ -1220,12 +1504,15 @@ class Ros2DataSource(QObject):
             return
         if not isinstance(payload, dict):
             return
+        changed = self._apply_phone_fix_health(payload.get("phone_fix"))
         selected_route = payload.get("selected_route")
         geometry = selected_route.get("geometry") if isinstance(selected_route, dict) else None
         if not isinstance(geometry, list):
             if self._phone_route_points:
                 self._phone_route_points = []
                 self._phone_route_steps = []
+                changed = True
+            if changed:
                 self._emit_state()
             return
 
@@ -1244,6 +1531,16 @@ class Ros2DataSource(QObject):
         self._phone_route_points = points
         self._phone_route_steps = self._parse_phone_route_steps(selected_route)
         self._emit_state()
+
+    def _apply_phone_fix_health(self, payload) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("fresh", True) and payload.get("available", True):
+            return False
+        if self._phone_current is None:
+            return False
+        self._phone_current = None
+        return True
 
     def _parse_phone_route_steps(self, selected_route: dict) -> list[RouteStep]:
         raw_steps = selected_route.get("guidance_steps")

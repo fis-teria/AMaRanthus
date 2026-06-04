@@ -77,6 +77,13 @@ away from the route for 3 seconds, with a 10 second cooldown between reroutes.
 Tune this with `auto_reroute_enabled`, `off_route_threshold_m`,
 `off_route_hold_sec`, and `reroute_cooldown_sec`.
 
+To protect downstream nodes from stale browser GPS, the bridge only publishes
+`/phone/gps/fix` and `/shadow/route/gui_path` while the last phone update is
+fresh. The default stale timeout is 3 seconds. Tune it with
+`fix_stale_timeout_sec`; set it to `0.0` to disable the guard. While stale,
+`/phone/location/status` sets `current` to null and keeps the stale coordinate in
+`last_current` for diagnostics.
+
 ## Outputs
 
 - `/phone/gps/fix` (`sensor_msgs/msg/NavSatFix`): current phone location.

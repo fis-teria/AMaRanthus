@@ -23,6 +23,8 @@ INSTALL_IBUS_MOZC="${INSTALL_IBUS_MOZC:-1}"
 INSTALL_UV="${INSTALL_UV:-1}"
 INSTALL_YOLO_CUDA_VENV="${INSTALL_YOLO_CUDA_VENV:-0}"
 INSTALL_IRODORI_TTS_LITE="${INSTALL_IRODORI_TTS_LITE:-0}"
+INSTALL_PHONE_ADB_AUTOREVERSE="${INSTALL_PHONE_ADB_AUTOREVERSE:-1}"
+INSTALL_BATTERY_CHARGE_LIMIT="${INSTALL_BATTERY_CHARGE_LIMIT:-1}"
 SKIP_LIBREALSENSE="${SKIP_LIBREALSENSE:-0}"
 SKIP_LIVOX_SDK2="${SKIP_LIVOX_SDK2:-0}"
 SKIP_LIBTORCH="${SKIP_LIBTORCH:-0}"
@@ -31,6 +33,12 @@ YOLO_CUDA_TORCH_VERSION="${YOLO_CUDA_TORCH_VERSION:-2.11.0+cu128}"
 YOLO_CUDA_TORCHVISION_VERSION="${YOLO_CUDA_TORCHVISION_VERSION:-0.26.0+cu128}"
 YOLO_CUDA_TORCH_INDEX_URL="${YOLO_CUDA_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 YOLO_ULTRALYTICS_VERSION="${YOLO_ULTRALYTICS_VERSION:-8.4.6}"
+PHONE_LOCATION_ANDROID_VENDOR_ID="${PHONE_LOCATION_ANDROID_VENDOR_ID:-0fce}"
+PHONE_LOCATION_BRIDGE_PORT="${PHONE_LOCATION_BRIDGE_PORT:-8765}"
+PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC="${PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC:-0}"
+BATTERY_CHARGE_LIMIT_PERCENT="${BATTERY_CHARGE_LIMIT_PERCENT:-50}"
+BATTERY_CHARGE_LIMIT_WAIT_SEC="${BATTERY_CHARGE_LIMIT_WAIT_SEC:-60}"
+BATTERY_CHARGE_THRESHOLD_PATH="${BATTERY_CHARGE_THRESHOLD_PATH:-}"
 
 usage() {
   cat <<'EOF'
@@ -49,6 +57,8 @@ Options:
   --with-yolo-cuda-venv            Install CUDA-enabled Python deps for yolo_ros under Data/venvs.
                                    Also installs the lightweight LEAD inference deps used by e2e_transfuser.
   --with-irodori-tts-lite          Install isolated uv env for src/tts/irodori_tts_lite.
+  --skip-phone-adb-autoreverse     Skip phone_location_bridge ADB reverse auto-start setup.
+  --skip-battery-charge-limit      Skip PC battery charge limit systemd setup.
   --libtorch-variant <cpu|cu118|cu121>
                                    Select the libtorch package variant to install. Default: cu121.
   --libtorch-install-dir <path>    Install libtorch into this directory. Default: /opt/libtorch.
@@ -65,7 +75,10 @@ Environment variables:
   CUDA_VERSION,
   INSTALL_CUDA, INSTALL_NVIDIA_CONTAINER_TOOLKIT,
   INSTALL_DOCKER, INSTALL_NVIDIA_SMI, INSTALL_NVIDIA_DRIVER, INSTALL_IBUS_MOZC, INSTALL_UV,
-  INSTALL_YOLO_CUDA_VENV, INSTALL_IRODORI_TTS_LITE,
+  INSTALL_YOLO_CUDA_VENV, INSTALL_IRODORI_TTS_LITE, INSTALL_PHONE_ADB_AUTOREVERSE,
+  PHONE_LOCATION_ANDROID_VENDOR_ID, PHONE_LOCATION_BRIDGE_PORT, PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC,
+  INSTALL_BATTERY_CHARGE_LIMIT, BATTERY_CHARGE_LIMIT_PERCENT, BATTERY_CHARGE_LIMIT_WAIT_SEC,
+  BATTERY_CHARGE_THRESHOLD_PATH,
   SKIP_LIBREALSENSE, SKIP_LIVOX_SDK2, SKIP_LIBTORCH, SKIP_ACADOS
 
 Examples:
@@ -103,6 +116,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-irodori-tts-lite)
       INSTALL_IRODORI_TTS_LITE=1
+      ;;
+    --skip-phone-adb-autoreverse)
+      INSTALL_PHONE_ADB_AUTOREVERSE=0
+      ;;
+    --skip-battery-charge-limit)
+      INSTALL_BATTERY_CHARGE_LIMIT=0
       ;;
     --libtorch-variant)
       shift
@@ -249,6 +268,7 @@ install_base_packages() {
     python3-rosdep \
     python3-venv \
     python3-vcstool \
+    android-tools-adb \
     dbus-x11 \
     ibus \
     ibus-mozc \
@@ -637,6 +657,69 @@ install_irodori_tts_lite() {
   run_as_target_user "${setup_script}"
 }
 
+install_phone_adb_autoreverse() {
+  local setup_script="${REPO_ROOT}/src/shadow_mode/phone_location_bridge/scripts/install_phone_adb_autoreverse.sh"
+
+  if [[ "${INSTALL_PHONE_ADB_AUTOREVERSE}" != "1" ]]; then
+    return
+  fi
+
+  if [[ ! -x "${setup_script}" ]]; then
+    warn "phone_location_bridge ADB auto reverse installer not found: ${setup_script}"
+    warn "Skipping phone ADB auto-start setup. Run git submodule update --init --recursive if the package is missing."
+    return
+  fi
+
+  log "Installing phone_location_bridge ADB reverse auto-start"
+  PHONE_LOCATION_ADB_USER="${TARGET_USER}" \
+    PHONE_LOCATION_ANDROID_VENDOR_ID="${PHONE_LOCATION_ANDROID_VENDOR_ID}" \
+    PHONE_LOCATION_BRIDGE_PORT="${PHONE_LOCATION_BRIDGE_PORT}" \
+    PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC="${PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC}" \
+    "${setup_script}"
+}
+
+install_battery_charge_limit() {
+  local apply_script="${REPO_ROOT}/setup/apply_battery_charge_limit.sh"
+  local service_path="/etc/systemd/system/helianthus-battery-charge-limit.service"
+  local tmpfiles_path="/etc/tmpfiles.d/battery-charge-threshold.conf"
+
+  if [[ "${INSTALL_BATTERY_CHARGE_LIMIT}" != "1" ]]; then
+    return
+  fi
+
+  if [[ ! -x "${apply_script}" ]]; then
+    warn "Battery charge limit script not found or not executable: ${apply_script}"
+    return
+  fi
+
+  log "Installing PC battery charge limit service (${BATTERY_CHARGE_LIMIT_PERCENT}%)"
+  ${SUDO} tee "${service_path}" >/dev/null <<EOF
+[Unit]
+Description=Apply Helianthus PC battery charge limit
+After=systemd-udev-settle.service power-profiles-daemon.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+Environment=BATTERY_CHARGE_LIMIT_PERCENT=${BATTERY_CHARGE_LIMIT_PERCENT}
+Environment=BATTERY_CHARGE_LIMIT_WAIT_SEC=${BATTERY_CHARGE_LIMIT_WAIT_SEC}
+Environment=BATTERY_CHARGE_THRESHOLD_PATH=${BATTERY_CHARGE_THRESHOLD_PATH}
+ExecStart=/usr/bin/env bash ${apply_script}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  ${SUDO} tee "${tmpfiles_path}" >/dev/null <<EOF
+# Keep the PC battery charge limit at ${BATTERY_CHARGE_LIMIT_PERCENT}%.
+w /sys/class/power_supply/BAT0/charge_control_end_threshold - - - - ${BATTERY_CHARGE_LIMIT_PERCENT}
+EOF
+
+  ${SUDO} systemctl daemon-reload
+  ${SUDO} systemctl enable --now helianthus-battery-charge-limit.service
+}
+
 install_libtorch() {
   local archive=""
   local download_url=""
@@ -867,6 +950,8 @@ main() {
   install_uv
   install_yolo_cuda_venv
   install_irodori_tts_lite
+  install_phone_adb_autoreverse
+  install_battery_charge_limit
   install_libtorch
   install_livrealsense
   install_livox_sdk2

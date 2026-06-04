@@ -32,10 +32,15 @@ fi
 echo "[INFO] Starting adb server with ${ADB_BIN}"
 "${ADB_BIN}" start-server
 
-echo "[INFO] Waiting for Android device for up to ${WAIT_TIMEOUT_SEC}s"
-if ! timeout "${WAIT_TIMEOUT_SEC}" "${ADB_BIN}" wait-for-device; then
-    echo "[ERROR] adb device did not appear before timeout." >&2
-    exit 1
+if [[ "${WAIT_TIMEOUT_SEC}" == "0" ]]; then
+    echo "[INFO] Waiting for Android device without timeout"
+    "${ADB_BIN}" wait-for-device
+else
+    echo "[INFO] Waiting for Android device for up to ${WAIT_TIMEOUT_SEC}s"
+    if ! timeout "${WAIT_TIMEOUT_SEC}" "${ADB_BIN}" wait-for-device; then
+        echo "[ERROR] adb device did not appear before timeout." >&2
+        exit 1
+    fi
 fi
 
 devices_output="$("${ADB_BIN}" devices)"

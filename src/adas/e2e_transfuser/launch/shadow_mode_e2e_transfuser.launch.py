@@ -83,6 +83,21 @@ def generate_launch_description():
             "localization_correction_gain": LaunchConfiguration(
                 "localization_correction_gain"
             ),
+            "localization_dynamic_correction_gain": LaunchConfiguration(
+                "localization_dynamic_correction_gain"
+            ),
+            "localization_low_speed_threshold_mps": LaunchConfiguration(
+                "localization_low_speed_threshold_mps"
+            ),
+            "localization_high_speed_threshold_mps": LaunchConfiguration(
+                "localization_high_speed_threshold_mps"
+            ),
+            "localization_high_speed_correction_gain": LaunchConfiguration(
+                "localization_high_speed_correction_gain"
+            ),
+            "localization_high_speed_max_correction_step_m": LaunchConfiguration(
+                "localization_high_speed_max_correction_step_m"
+            ),
             "use_route_target": use_route_target,
             "use_phone_location_bridge": LaunchConfiguration("use_phone_location_bridge"),
             "route_target_output_topic": LaunchConfiguration("target_point_topic"),
@@ -107,6 +122,9 @@ def generate_launch_description():
             "phone_bridge_tls_cert_file": LaunchConfiguration("phone_bridge_tls_cert_file"),
             "phone_bridge_tls_key_file": LaunchConfiguration("phone_bridge_tls_key_file"),
             "phone_bridge_osrm_service_url": LaunchConfiguration("phone_bridge_osrm_service_url"),
+            "phone_bridge_fix_stale_timeout_sec": LaunchConfiguration(
+                "phone_bridge_fix_stale_timeout_sec"
+            ),
             "phone_bridge_fix_topic": LaunchConfiguration("phone_bridge_fix_topic"),
             "phone_bridge_goal_topic": LaunchConfiguration("phone_bridge_goal_topic"),
             "phone_bridge_gps_status_topic": LaunchConfiguration("phone_bridge_gps_status_topic"),
@@ -434,7 +452,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_fast_lio_rviz", default_value="false"),
             DeclareLaunchArgument("use_yolo", default_value="true"),
             DeclareLaunchArgument("use_livox_lane_detection", default_value="false"),
-            DeclareLaunchArgument("use_camera_lane_detection", default_value="false"),
+            DeclareLaunchArgument("use_camera_lane_detection", default_value="true"),
             DeclareLaunchArgument("use_adas_bringup", default_value="false"),
             DeclareLaunchArgument("use_localization_fusion", default_value="true"),
             DeclareLaunchArgument("use_route_target", default_value="true"),
@@ -504,6 +522,14 @@ def generate_launch_description():
             DeclareLaunchArgument("localization_fix_timeout_sec", default_value="3.0"),
             DeclareLaunchArgument("localization_max_fix_accuracy_m", default_value="25.0"),
             DeclareLaunchArgument("localization_correction_gain", default_value="0.08"),
+            DeclareLaunchArgument("localization_dynamic_correction_gain", default_value="true"),
+            DeclareLaunchArgument("localization_low_speed_threshold_mps", default_value="3.0"),
+            DeclareLaunchArgument("localization_high_speed_threshold_mps", default_value="20.0"),
+            DeclareLaunchArgument("localization_high_speed_correction_gain", default_value="0.01"),
+            DeclareLaunchArgument(
+                "localization_high_speed_max_correction_step_m",
+                default_value="0.05",
+            ),
             DeclareLaunchArgument("image_topic", default_value="/sensing/camera/camera0/image_rect_color"),
             DeclareLaunchArgument("camera_info_topic", default_value="/sensing/camera/camera0/camera_info"),
             DeclareLaunchArgument("v4l2_image_topic", default_value="image_rect_color"),
@@ -619,6 +645,7 @@ def generate_launch_description():
                 "phone_bridge_osrm_service_url",
                 default_value="https://routing.openstreetmap.de/routed-car/route/v1/driving",
             ),
+            DeclareLaunchArgument("phone_bridge_fix_stale_timeout_sec", default_value="3.0"),
             DeclareLaunchArgument("phone_bridge_fix_topic", default_value="/phone/gps/fix"),
             DeclareLaunchArgument("phone_bridge_goal_topic", default_value="/phone/route/goal"),
             DeclareLaunchArgument(

@@ -142,6 +142,9 @@ class PhoneLocationBridge(Node):
             "osrm_service_url", OSRM_SERVICE_URL
         ).value.rstrip("/")
         self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 5.0).value)
+        self.fix_stale_timeout_sec = max(
+            0.0, float(self.declare_parameter("fix_stale_timeout_sec", 3.0).value)
+        )
         self.fix_topic = self.declare_parameter("fix_topic", "/phone/gps/fix").value
         self.goal_topic = self.declare_parameter("goal_topic", "/phone/route/goal").value
         self.route_path_topic = self.declare_parameter(
@@ -253,7 +256,7 @@ class PhoneLocationBridge(Node):
                     self._send_html(PHONE_HTML)
                     return
                 if self.path == "/api/state":
-                    self._send_json(node.state.snapshot())
+                    self._send_json(node._state_snapshot())
                     return
                 self.send_error(404)
 
@@ -877,25 +880,91 @@ class PhoneLocationBridge(Node):
             selected_route = self.state.selected_route()
             snapshot = self.state.snapshot()
 
-        now = self.get_clock().now().to_msg()
-        if current is not None:
-            self.fix_pub.publish(self._build_fix(current, now))
-            age = max(0.0, time.time() - current.updated_sec)
-            self.gps_status_pub.publish(String(data=f"FIX phone age={age:.1f}s"))
-        else:
-            self.gps_status_pub.publish(String(data="NO_FIX phone"))
+        current_age_sec = self._point_age_sec(current)
+        current_fresh = self._point_is_fresh(current, current_age_sec)
+        fresh_current = current if current_fresh else None
+        self._annotate_fix_health(snapshot, current, current_age_sec, current_fresh)
 
-        route_meta = self._route_meta(current, goal, selected_route)
+        now = self.get_clock().now().to_msg()
+        if fresh_current is not None:
+            self.fix_pub.publish(self._build_fix(fresh_current, now))
+            age = current_age_sec if current_age_sec is not None else 0.0
+            self.gps_status_pub.publish(String(data=f"FIX phone age={age:.1f}s"))
+        elif current is not None:
+            age = current_age_sec if current_age_sec is not None else 0.0
+            self.gps_status_pub.publish(
+                String(
+                    data=(
+                        f"LOST phone stale age={age:.1f}s "
+                        f"limit={self.fix_stale_timeout_sec:.1f}s"
+                    )
+                )
+            )
+        else:
+            self.gps_status_pub.publish(String(data="LOST phone no_location"))
+
+        route_meta = self._route_meta(fresh_current, goal, selected_route)
         if goal is not None:
             self.goal_pub.publish(String(data=json.dumps(route_meta, sort_keys=True)))
-        if current is not None and goal is not None:
-            path = self._build_path(current, goal, now, route_meta, selected_route)
+        if fresh_current is not None and goal is not None:
+            path = self._build_path(fresh_current, goal, now, route_meta, selected_route)
             if path.poses:
                 self.path_pub.publish(path)
                 self.command_pub.publish(String(data=str(self.route_command)))
 
         snapshot["route"] = route_meta
         self.status_pub.publish(String(data=json.dumps(snapshot, sort_keys=True)))
+
+    def _state_snapshot(self) -> dict[str, Any]:
+        with self.state.lock:
+            snapshot = self.state.snapshot()
+            current = self.state.current
+        current_age_sec = self._point_age_sec(current)
+        current_fresh = self._point_is_fresh(current, current_age_sec)
+        self._annotate_fix_health(snapshot, current, current_age_sec, current_fresh)
+        return snapshot
+
+    @staticmethod
+    def _point_age_sec(point: Optional[GeoPoint]) -> Optional[float]:
+        if point is None:
+            return None
+        return max(0.0, time.time() - point.updated_sec)
+
+    def _point_is_fresh(self, point: Optional[GeoPoint], age_sec: Optional[float]) -> bool:
+        if point is None or age_sec is None:
+            return False
+        if self.fix_stale_timeout_sec <= 0.0:
+            return True
+        return age_sec <= self.fix_stale_timeout_sec
+
+    def _fix_health_payload(
+        self,
+        point: Optional[GeoPoint],
+        age_sec: Optional[float],
+        fresh: bool,
+    ) -> dict[str, Any]:
+        return {
+            "available": point is not None,
+            "fresh": fresh,
+            "stale": point is not None and not fresh,
+            "age_sec": age_sec,
+            "stale_timeout_sec": (
+                None if self.fix_stale_timeout_sec <= 0.0 else self.fix_stale_timeout_sec
+            ),
+            "publishing_fix": fresh,
+        }
+
+    def _annotate_fix_health(
+        self,
+        snapshot: dict[str, Any],
+        point: Optional[GeoPoint],
+        age_sec: Optional[float],
+        fresh: bool,
+    ) -> None:
+        snapshot["phone_fix"] = self._fix_health_payload(point, age_sec, fresh)
+        if point is not None and not fresh:
+            snapshot["last_current"] = snapshot.get("current")
+            snapshot["current"] = None
 
     def _build_fix(self, point: GeoPoint, stamp) -> NavSatFix:
         msg = NavSatFix()
@@ -1068,6 +1137,7 @@ PHONE_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Phone Location Bridge</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     :root {
       color-scheme: dark;
@@ -1300,10 +1370,57 @@ PHONE_HTML = """<!doctype html>
       content: "";
       position: absolute;
       inset: 0;
+      z-index: 1;
+      pointer-events: none;
       background:
         radial-gradient(circle at 50% 50%, rgba(0, 182, 255, 0.22), transparent 20%),
         radial-gradient(circle at 20% 70%, rgba(0, 255, 178, 0.14), transparent 22%),
         linear-gradient(rgba(4, 13, 30, 0.05), rgba(1, 6, 15, 0.42));
+    }
+    #phone-map {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      min-height: 100%;
+      background: #071327;
+    }
+    .map-fallback {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      text-align: center;
+      color: #bcd8ff;
+      background: rgba(2, 8, 22, 0.72);
+    }
+    .map-fallback.hidden {
+      display: none;
+    }
+    .leaflet-container {
+      font: inherit;
+      background: #071327;
+    }
+    .leaflet-control-attribution {
+      background: rgba(2, 8, 22, 0.72) !important;
+      color: #bcd8ff !important;
+    }
+    .leaflet-control-attribution a {
+      color: #72d4ff !important;
+    }
+    .bridge-marker {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 3px solid white;
+      background: #238cff;
+      box-shadow: 0 0 0 10px rgba(0, 136, 255, 0.18), 0 0 24px rgba(0, 180, 255, 0.86);
+    }
+    .bridge-marker.goal {
+      border-radius: 7px 7px 7px 0;
+      transform: rotate(-45deg);
+      background: linear-gradient(135deg, #00d5ff, #7837ff);
     }
     .map-label {
       position: absolute;
@@ -1584,11 +1701,8 @@ PHONE_HTML = """<!doctype html>
         <div class="map-frame">
           <div class="last-update">最終更新: <span id="last-update">--:--:--</span></div>
           <div class="map-preview">
-            <span class="map-label a">現在地</span>
-            <span class="map-label b">目的地方向</span>
-            <span class="map-label c">Route</span>
-            <div class="locator"></div>
-            <div class="google">Phone GPS</div>
+            <div id="phone-map"></div>
+            <div id="map-fallback" class="map-fallback">地図を読み込み中...</div>
           </div>
         </div>
         <button class="btn secondary" onclick="toggleWatch()" id="watch-button">現在地の取得を開始</button>
@@ -1665,8 +1779,14 @@ PHONE_HTML = """<!doctype html>
     </footer>
   </div>
 </main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 let watchId = null;
+let bridgeMap = null;
+let currentMarker = null;
+let goalMarker = null;
+let routeLine = null;
+let lastSelectedRoute = null;
 const $ = (id) => document.getElementById(id);
 function timeText() {
   return new Date().toLocaleTimeString('ja-JP', {hour12: false});
@@ -1674,6 +1794,104 @@ function timeText() {
 function num(id) {
   const value = $(id).value.trim();
   return value === '' ? null : Number(value);
+}
+function validLatLon(point) {
+  return point &&
+    Number.isFinite(Number(point.lat)) &&
+    Number.isFinite(Number(point.lon)) &&
+    Math.abs(Number(point.lat)) <= 90 &&
+    Math.abs(Number(point.lon)) <= 180;
+}
+function initBridgeMap() {
+  if (bridgeMap || !window.L) return;
+  bridgeMap = L.map('phone-map', {
+    zoomControl: true,
+    attributionControl: true,
+    preferCanvas: true
+  }).setView([35.681236, 139.767125], 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  }).addTo(bridgeMap);
+  $('map-fallback').classList.add('hidden');
+}
+function markerIcon(kind) {
+  return L.divIcon({
+    className: '',
+    html: '<div class="bridge-marker ' + kind + '"></div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, kind === 'goal' ? 28 : 14]
+  });
+}
+function updateMapCurrent(point) {
+  if (!validLatLon(point)) return;
+  initBridgeMap();
+  if (!bridgeMap) return;
+  const latlng = [Number(point.lat), Number(point.lon)];
+  if (!currentMarker) {
+    currentMarker = L.marker(latlng, {icon: markerIcon('current')}).addTo(bridgeMap);
+    currentMarker.bindPopup('現在地');
+  } else {
+    currentMarker.setLatLng(latlng);
+  }
+  currentMarker.setPopupContent('現在地<br>' + Number(point.lat).toFixed(6) + ', ' + Number(point.lon).toFixed(6));
+  fitMapToData(false);
+}
+function updateMapGoal(point) {
+  if (!validLatLon(point)) return;
+  initBridgeMap();
+  if (!bridgeMap) return;
+  const latlng = [Number(point.lat), Number(point.lon)];
+  if (!goalMarker) {
+    goalMarker = L.marker(latlng, {icon: markerIcon('goal')}).addTo(bridgeMap);
+    goalMarker.bindPopup('目的地');
+  } else {
+    goalMarker.setLatLng(latlng);
+  }
+  goalMarker.setPopupContent((point.name || '目的地') + '<br>' + Number(point.lat).toFixed(6) + ', ' + Number(point.lon).toFixed(6));
+  fitMapToData(false);
+}
+function updateMapRoute(route) {
+  lastSelectedRoute = route || null;
+  initBridgeMap();
+  if (!bridgeMap) return;
+  if (routeLine) {
+    bridgeMap.removeLayer(routeLine);
+    routeLine = null;
+  }
+  const geometry = route && Array.isArray(route.geometry) ? route.geometry : [];
+  const latlngs = geometry
+    .filter(validLatLon)
+    .map((point) => [Number(point.lat), Number(point.lon)]);
+  if (latlngs.length >= 2) {
+    routeLine = L.polyline(latlngs, {
+      color: '#ffe761',
+      weight: 6,
+      opacity: 0.95,
+      lineJoin: 'round'
+    }).addTo(bridgeMap);
+  }
+  fitMapToData(true);
+}
+function fitMapToData(includeRoute) {
+  if (!bridgeMap) return;
+  const layers = [];
+  if (currentMarker) layers.push(currentMarker);
+  if (goalMarker) layers.push(goalMarker);
+  if (includeRoute && routeLine) layers.push(routeLine);
+  if (layers.length === 0) return;
+  const group = L.featureGroup(layers);
+  const bounds = group.getBounds();
+  if (bounds.isValid()) {
+    bridgeMap.fitBounds(bounds.pad(0.18), {maxZoom: routeLine ? 16 : 17});
+  }
+}
+async function refreshState(updateLog) {
+  const response = await fetch('/api/state');
+  const data = await response.json();
+  hydrateState(data);
+  if (updateLog) show(data);
+  return data;
 }
 function show(data) {
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -1716,13 +1934,22 @@ function goalPayload() {
 }
 function sendCurrent() {
   updateCurrentReadout();
-  post('/api/location', currentPayload()).catch((e) => show(String(e)));
+  post('/api/location', currentPayload())
+    .then((data) => {
+      if (data && data.current) updateMapCurrent(data.current);
+      if (data && data.reroute && data.reroute.triggered) refreshState(false);
+    })
+    .catch((e) => show(String(e)));
 }
 function sendGoal() {
-  post('/api/goal', goalPayload()).catch((e) => show(String(e)));
+  post('/api/goal', goalPayload())
+    .then((data) => { if (data && data.goal) updateMapGoal(data.goal); })
+    .catch((e) => show(String(e)));
 }
 function sendRoute() {
-  post('/api/route', {current: currentPayload(), goal: goalPayload()}).catch((e) => show(String(e)));
+  post('/api/route', {current: currentPayload(), goal: goalPayload()})
+    .then((data) => { if (data && data.state) hydrateState(data.state); })
+    .catch((e) => show(String(e)));
 }
 function formatDistance(meters) {
   if (!Number.isFinite(meters)) return '--';
@@ -1765,15 +1992,21 @@ async function searchRoutes() {
     });
     if (data && data.ok) {
       updateRouteSelect(data.routes, data.selected_route_index);
+      refreshState(false);
     }
   } catch (e) {
     show(String(e));
   }
 }
-function selectRoute() {
+async function selectRoute() {
   const value = $('route-select').value;
   if (value === '') return;
-  post('/api/select_route', {index: Number(value)}).catch((e) => show(String(e)));
+  try {
+    const data = await post('/api/select_route', {index: Number(value)});
+    if (data && data.state) hydrateState(data.state);
+  } catch (e) {
+    show(String(e));
+  }
 }
 function setValueIfPresent(id, value, digits) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return;
@@ -1796,6 +2029,9 @@ function hydrateState(data) {
   if (data.route_options) {
     updateRouteSelect(data.route_options, data.selected_route_index);
   }
+  updateMapCurrent(data.current);
+  updateMapGoal(data.goal);
+  updateMapRoute(data.selected_route);
 }
 async function importGoalUrl() {
   const url = $('goal-url').value.trim();
@@ -1809,6 +2045,7 @@ async function importGoalUrl() {
       $('goal-lat').value = Number(data.goal.lat).toFixed(8);
       $('goal-lon').value = Number(data.goal.lon).toFixed(8);
       $('goal-name').value = data.goal.name || 'goal';
+      updateMapGoal(data.goal);
     }
   } catch (e) {
     show(String(e));
@@ -1863,10 +2100,8 @@ function stopWatch() {
   setWatchUi(false);
   show('Stopped location watch.');
 }
-fetch('/api/state')
-  .then((r) => r.json())
-  .then((data) => { hydrateState(data); show(data); })
-  .catch(() => {});
+initBridgeMap();
+refreshState(true).catch(() => {});
 </script>
 </body>
 </html>

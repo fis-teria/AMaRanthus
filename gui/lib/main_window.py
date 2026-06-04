@@ -23,6 +23,8 @@ from .data_sources import DemoDataSource, Ros2DataSource
 from .map_widget import MapWidget
 from .models import UiState
 from .pointcloud_view import PointCloudView
+from .rosbag_controls import RosbagControlPanel
+from .route_voice_guidance import RouteVoiceGuidance
 from .sensor_view import SensorView
 from .shadow_panel import ShadowMetricsPanel
 from .status_panel import StatusPanel
@@ -59,8 +61,15 @@ class MainWindow(QMainWindow):
         pointcloud_view_range_m: float = 80.0,
         pointcloud_view_z_min_m: float = -3.0,
         pointcloud_view_z_max_m: float = 3.0,
+        route_voice_guidance_enabled: bool = True,
+        tts_backend_url: str = "http://127.0.0.1:8766",
+        route_voice_preannounce_distance_m: float = 300.0,
         gpu_monitor_interval_sec: float = 1.0,
         gpu_monitor_enabled: bool = True,
+        rosbag_record_dir: str | None = None,
+        rosbag_record_topics: list[str] | None = None,
+        rosbag_record_presets: dict[str, list[str]] | None = None,
+        rosbag_default_record_preset: str = "",
     ):
         super().__init__()
         self._data_sources = data_sources
@@ -68,6 +77,12 @@ class MainWindow(QMainWindow):
         self._gpu_monitor = GpuMonitor(
             interval_sec=gpu_monitor_interval_sec,
             enabled=gpu_monitor_enabled,
+            parent=self,
+        )
+        self._route_voice_guidance = RouteVoiceGuidance(
+            enabled=route_voice_guidance_enabled,
+            backend_url=tts_backend_url,
+            preannounce_distance_m=route_voice_preannounce_distance_m,
             parent=self,
         )
         self._auto_activate_ros2_fields = initial_data_source == "ros2"
@@ -203,6 +218,13 @@ class MainWindow(QMainWindow):
 
         self.status_panel = StatusPanel()
         self.shadow_panel = ShadowMetricsPanel()
+        self.rosbag_panel = RosbagControlPanel(
+            output_dir=rosbag_record_dir,
+            record_topics=rosbag_record_topics or [],
+            record_presets=rosbag_record_presets or {},
+            default_record_preset=rosbag_default_record_preset,
+            log_callback=self.log_message,
+        )
         self.sensor_view = SensorView(render_config=self._render_config)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -212,6 +234,7 @@ class MainWindow(QMainWindow):
         self.status_log_tabs.setObjectName("StatusLogTabs")
         self.status_log_tabs.addTab(self.status_panel, "VehicleStatus")
         self.status_log_tabs.addTab(self.log_view, "Log")
+        self.status_log_tabs.addTab(self.rosbag_panel, "RosBag")
 
         right_layout.addLayout(source_grid)
         right_layout.addWidget(self.status_log_tabs, 0)
@@ -229,6 +252,7 @@ class MainWindow(QMainWindow):
         self._apply_theme(self._theme)
 
         self.log_message("INFO", f"GUI started with initial source: {initial_data_source}")
+        self._route_voice_guidance.set_log_callback(self.log_message)
         self._start_data_sources()
         self._start_gpu_monitor()
 
@@ -255,10 +279,20 @@ class MainWindow(QMainWindow):
             min_distance_m=state.min_distance_m,
         )
         self.pointcloud_view.set_points(state.pointcloud_points)
+        self.pointcloud_view.set_route_layers(
+            route_pointcloud_points=state.route_pointcloud_points,
+            route_path_points=state.route_path_points,
+            e2e_path_points=state.e2e_path_points,
+        )
         self.camera_view.set_frame(state.camera_frame)
         self.map_widget.set_phone_current(state.phone_current)
         self.map_widget.set_phone_goal(state.phone_goal)
         self.map_widget.set_phone_route(state.phone_route_points, state.phone_route_steps)
+        self._route_voice_guidance.update_route(
+            current=state.phone_current,
+            route_points=state.phone_route_points,
+            route_steps=state.phone_route_steps,
+        )
 
     def switch_left_view(self, view_name: str) -> None:
         self.left_stack.setCurrentIndex(self._left_view_indexes.get(view_name, 0))
@@ -455,12 +489,16 @@ class MainWindow(QMainWindow):
             return demo_state
 
         scan_state = field_source("scan")
+        pointcloud_state = field_source("pointcloud")
         objects_state = field_source("objects")
 
         return UiState(
             scan_points=scan_state.scan_points,
             lane_points=field_source("lane").lane_points,
-            pointcloud_points=field_source("pointcloud").pointcloud_points,
+            pointcloud_points=pointcloud_state.pointcloud_points,
+            route_pointcloud_points=pointcloud_state.route_pointcloud_points,
+            route_path_points=pointcloud_state.route_path_points,
+            e2e_path_points=pointcloud_state.e2e_path_points,
             objects=objects_state.objects,
             speed_kmh=field_source("speed").speed_kmh,
             min_distance_m=scan_state.min_distance_m,
@@ -480,6 +518,9 @@ class MainWindow(QMainWindow):
             scan_points=[],
             lane_points=[],
             pointcloud_points=[],
+            route_pointcloud_points=[],
+            route_path_points=[],
+            e2e_path_points=[],
             objects=[],
             speed_kmh=0.0,
             min_distance_m=99.0,
@@ -513,6 +554,8 @@ class MainWindow(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event):
+        self.rosbag_panel.stop_all()
+        self._route_voice_guidance.stop()
         self._gpu_monitor.stop()
         for data_source in self._data_sources.values():
             data_source.stop()
@@ -530,11 +573,17 @@ def build_data_sources(
     ros_camera_display_max_edge_px: int,
     ros_camera_info_topic: str,
     ros_pointcloud_topic: str,
+    ros_pointcloud_odom_topic: str,
+    ros_pointcloud_stabilize_with_odom: bool,
     ros_pointcloud_max_points: int,
     ros_pointcloud_min_update_interval_sec: float,
     ros_pointcloud_max_range_m: float,
     ros_pointcloud_z_min_m: float,
     ros_pointcloud_z_max_m: float,
+    ros_route_pointcloud_topic: str,
+    ros_route_pointcloud_max_points: int,
+    ros_route_path_topic: str,
+    ros_e2e_path_topic: str,
     ros_scan_topic: str,
     ros_lane_topic: str,
     ros_objects_topic: str,
@@ -568,11 +617,17 @@ def build_data_sources(
             camera_display_max_edge_px=ros_camera_display_max_edge_px,
             camera_info_topic=ros_camera_info_topic,
             pointcloud_topic=ros_pointcloud_topic,
+            pointcloud_odom_topic=ros_pointcloud_odom_topic,
+            pointcloud_stabilize_with_odom=ros_pointcloud_stabilize_with_odom,
             pointcloud_max_points=ros_pointcloud_max_points,
             pointcloud_min_update_interval_sec=ros_pointcloud_min_update_interval_sec,
             pointcloud_max_range_m=ros_pointcloud_max_range_m,
             pointcloud_z_min_m=ros_pointcloud_z_min_m,
             pointcloud_z_max_m=ros_pointcloud_z_max_m,
+            route_pointcloud_topic=ros_route_pointcloud_topic,
+            route_pointcloud_max_points=ros_route_pointcloud_max_points,
+            route_path_topic=ros_route_path_topic,
+            e2e_path_topic=ros_e2e_path_topic,
             scan_topic=ros_scan_topic,
             lane_topic=ros_lane_topic,
             objects_topic=ros_objects_topic,

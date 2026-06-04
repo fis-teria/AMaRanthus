@@ -9,7 +9,8 @@ Type=oneshot
 Environment=PHONE_LOCATION_BRIDGE_PORT=@PHONE_LOCATION_BRIDGE_PORT@
 Environment=PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC=@PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC@
 ExecStart=@PHONE_LOCATION_ADB_AUTOREVERSE_SCRIPT@
-TimeoutStartSec=45
+KillMode=process
+TimeoutStartSec=infinity
 
 [Install]
 WantedBy=default.target

@@ -8,6 +8,12 @@ fresh `NavSatFix` is available from the phone or Spresense, it estimates a slow
 XY correction and applies it to the LiDAR pose. Orientation and twist remain
 LiDAR-derived so short-term motion stays smooth.
 
+GNSS correction is speed-adaptive by default. At low speed it uses the normal
+`correction_gain`; above `high_speed_threshold_mps` it blends down to
+`high_speed_correction_gain` and a smaller `high_speed_max_correction_step_m` so
+highway-speed odometry does not get large pose nudges that appear as ego-speed
+spikes.
+
 ## Inputs
 
 - `/Odometry` (`nav_msgs/msg/Odometry`): FAST-LIO / LiDAR odometry.
@@ -24,6 +30,18 @@ LiDAR-derived so short-term motion stays smooth.
 
 ```bash
 ros2 launch shadow_mode_localization_fusion shadow_localization_fusion.launch.py
+```
+
+Useful highway-oriented tuning knobs:
+
+```bash
+ros2 launch shadow_mode_localization_fusion shadow_localization_fusion.launch.py \
+  dynamic_correction_gain:=true \
+  low_speed_threshold_mps:=3.0 \
+  high_speed_threshold_mps:=20.0 \
+  correction_gain:=0.08 \
+  high_speed_correction_gain:=0.01 \
+  high_speed_max_correction_step_m:=0.05
 ```
 
 The E2E ShadowMode launch can use this output by setting:

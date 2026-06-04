@@ -23,7 +23,7 @@ Environment:
   PHONE_LOCATION_ADB_USER        target desktop user (default: current user)
   PHONE_LOCATION_ANDROID_VENDOR_ID Android USB vendor id (default: 0fce for Sony)
   PHONE_LOCATION_BRIDGE_PORT     phone_location_bridge HTTP port (default: 8765)
-  PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC adb wait timeout (default: 30)
+  PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC adb wait timeout, 0 waits forever (default: 0)
   PHONE_LOCATION_SKIP_UDEV       install only the user service (default: 0)
 EOF
             exit 0
@@ -48,7 +48,7 @@ TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
 
 ANDROID_VENDOR_ID="${PHONE_LOCATION_ANDROID_VENDOR_ID:-0fce}"
 PHONE_LOCATION_BRIDGE_PORT="${PHONE_LOCATION_BRIDGE_PORT:-8765}"
-PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC="${PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC:-30}"
+PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC="${PHONE_LOCATION_ADB_WAIT_TIMEOUT_SEC:-0}"
 
 AUTOREVERSE_SCRIPT="${SCRIPT_DIR}/phone_location_adb_autoreverse.sh"
 SERVICE_TEMPLATE=""
@@ -169,6 +169,7 @@ install -d -m 0755 -o "${TARGET_USER}" -g "${TARGET_GROUP}" "${SERVICE_DIR}"
 install -m 0644 -o "${TARGET_USER}" -g "${TARGET_GROUP}" "${service_tmp}" "${SERVICE_PATH}"
 
 run_as_target_user env "XDG_RUNTIME_DIR=/run/user/${TARGET_UID}" systemctl --user daemon-reload
+run_as_target_user env "XDG_RUNTIME_DIR=/run/user/${TARGET_UID}" systemctl --user enable phone-location-adb-reverse.service
 
 if [[ "${SKIP_UDEV}" == "1" ]]; then
     cat <<EOF

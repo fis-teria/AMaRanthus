@@ -26,6 +26,9 @@ def generate_launch_description():
                 "publish_rate_hz": ParameterValue(
                     LaunchConfiguration("publish_rate_hz"), value_type=float
                 ),
+                "fix_stale_timeout_sec": ParameterValue(
+                    LaunchConfiguration("fix_stale_timeout_sec"), value_type=float
+                ),
                 "fix_topic": LaunchConfiguration("fix_topic"),
                 "goal_topic": LaunchConfiguration("goal_topic"),
                 "route_path_topic": LaunchConfiguration("route_path_topic"),
@@ -74,6 +77,7 @@ def generate_launch_description():
                 default_value="https://routing.openstreetmap.de/routed-car/route/v1/driving",
             ),
             DeclareLaunchArgument("publish_rate_hz", default_value="5.0"),
+            DeclareLaunchArgument("fix_stale_timeout_sec", default_value="3.0"),
             DeclareLaunchArgument("fix_topic", default_value="/phone/gps/fix"),
             DeclareLaunchArgument("goal_topic", default_value="/phone/route/goal"),
             DeclareLaunchArgument("route_path_topic", default_value="/shadow/route/gui_path"),

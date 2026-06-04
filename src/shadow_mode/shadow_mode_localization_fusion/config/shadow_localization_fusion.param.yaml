@@ -15,7 +15,12 @@ shadow_localization_fusion:
     phone_weight: 0.6
     spresense_weight: 1.0
     correction_gain: 0.08
+    dynamic_correction_gain: true
+    low_speed_threshold_mps: 3.0
+    high_speed_threshold_mps: 20.0
+    high_speed_correction_gain: 0.01
     max_correction_step_m: 0.5
+    high_speed_max_correction_step_m: 0.05
     max_residual_m: 40.0
     apply_z_correction: false
     path_buffer_size: 200

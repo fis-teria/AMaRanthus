@@ -78,8 +78,30 @@ class ShadowLocalizationFusionNode(Node):
         self.correction_gain = self.clamp(
             float(self.declare_parameter("correction_gain", 0.08).value), 0.0, 1.0
         )
+        self.dynamic_correction_gain = bool(
+            self.declare_parameter("dynamic_correction_gain", True).value
+        )
+        self.low_speed_threshold_mps = max(
+            0.0, float(self.declare_parameter("low_speed_threshold_mps", 3.0).value)
+        )
+        self.high_speed_threshold_mps = max(
+            self.low_speed_threshold_mps + 0.1,
+            float(self.declare_parameter("high_speed_threshold_mps", 20.0).value),
+        )
+        self.high_speed_correction_gain = self.clamp(
+            float(self.declare_parameter("high_speed_correction_gain", 0.01).value),
+            0.0,
+            self.correction_gain,
+        )
         self.max_correction_step_m = max(
             0.01, float(self.declare_parameter("max_correction_step_m", 0.5).value)
+        )
+        self.high_speed_max_correction_step_m = max(
+            0.001,
+            min(
+                self.max_correction_step_m,
+                float(self.declare_parameter("high_speed_max_correction_step_m", 0.05).value),
+            ),
         )
         self.max_residual_m = max(
             1.0, float(self.declare_parameter("max_residual_m", 40.0).value)
@@ -97,6 +119,10 @@ class ShadowLocalizationFusionNode(Node):
         self.gnss_to_odom_offset = None
         self.correction = [0.0, 0.0, 0.0]
         self.last_lidar_odom: Optional[Odometry] = None
+        self.last_lidar_speed_mps = 0.0
+        self.last_speed_ratio = 0.0
+        self.last_effective_correction_gain = self.correction_gain
+        self.last_effective_max_correction_step_m = self.max_correction_step_m
         self.last_fixes: dict[str, FixSample] = {}
         self.last_fix_received_by_topic: dict[str, float] = {}
         self.path = Path()
@@ -164,6 +190,8 @@ class ShadowLocalizationFusionNode(Node):
         self.ensure_origin(msg)
 
     def odom_callback(self, msg: Odometry) -> None:
+        previous_lidar_odom = self.last_lidar_odom
+        self.last_lidar_speed_mps = self.odom_speed_mps(msg, previous_lidar_odom)
         self.last_lidar_odom = msg
         now_sec = self.now_sec()
         local_fixes = self.fresh_local_fixes(now_sec)
@@ -171,7 +199,7 @@ class ShadowLocalizationFusionNode(Node):
         correction_applied = False
 
         if correction_target is not None:
-            self.update_correction(correction_target)
+            self.update_correction(correction_target, self.last_lidar_speed_mps)
             correction_applied = True
 
         fused = copy.deepcopy(msg)
@@ -312,22 +340,70 @@ class ShadowLocalizationFusionNode(Node):
             return None
         return [value / total_weight for value in weighted]
 
-    def update_correction(self, target) -> None:
+    def odom_speed_mps(self, odom: Odometry, previous_odom: Optional[Odometry]) -> float:
+        twist = odom.twist.twist.linear
+        values = (float(twist.x), float(twist.y), float(twist.z))
+        twist_speed = 0.0
+        if all(finite(value) for value in values):
+            twist_speed = math.sqrt(
+                values[0] * values[0] + values[1] * values[1] + values[2] * values[2]
+            )
+        pose_speed = self.pose_delta_speed_mps(odom, previous_odom)
+        return max(twist_speed, pose_speed)
+
+    def pose_delta_speed_mps(self, odom: Odometry, previous_odom: Optional[Odometry]) -> float:
+        if previous_odom is None:
+            return 0.0
+        dt = stamp_to_float(odom.header.stamp) - stamp_to_float(previous_odom.header.stamp)
+        if dt <= 0.001:
+            return 0.0
+        current = odom.pose.pose.position
+        previous = previous_odom.pose.pose.position
+        dx = float(current.x) - float(previous.x)
+        dy = float(current.y) - float(previous.y)
+        dz = float(current.z) - float(previous.z)
+        if not all(finite(value) for value in (dx, dy, dz)):
+            return 0.0
+        return math.sqrt(dx * dx + dy * dy + dz * dz) / dt
+
+    def speed_blend_ratio(self, speed_mps: float) -> float:
+        if not self.dynamic_correction_gain:
+            return 0.0
+        span = self.high_speed_threshold_mps - self.low_speed_threshold_mps
+        return self.clamp((speed_mps - self.low_speed_threshold_mps) / span, 0.0, 1.0)
+
+    def correction_limits_for_speed(self, speed_mps: float) -> tuple[float, float, float]:
+        ratio = self.speed_blend_ratio(speed_mps)
+        gain = (
+            self.correction_gain
+            + ratio * (self.high_speed_correction_gain - self.correction_gain)
+        )
+        max_step = (
+            self.max_correction_step_m
+            + ratio * (self.high_speed_max_correction_step_m - self.max_correction_step_m)
+        )
+        return ratio, gain, max_step
+
+    def update_correction(self, target, speed_mps: float) -> None:
+        ratio, correction_gain, max_correction_step_m = self.correction_limits_for_speed(speed_mps)
+        self.last_speed_ratio = ratio
+        self.last_effective_correction_gain = correction_gain
+        self.last_effective_max_correction_step_m = max_correction_step_m
         desired_step = [
-            (target[0] - self.correction[0]) * self.correction_gain,
-            (target[1] - self.correction[1]) * self.correction_gain,
-            (target[2] - self.correction[2]) * self.correction_gain,
+            (target[0] - self.correction[0]) * correction_gain,
+            (target[1] - self.correction[1]) * correction_gain,
+            (target[2] - self.correction[2]) * correction_gain,
         ]
         xy_norm = math.hypot(desired_step[0], desired_step[1])
-        if xy_norm > self.max_correction_step_m:
-            scale = self.max_correction_step_m / xy_norm
+        if xy_norm > max_correction_step_m:
+            scale = max_correction_step_m / xy_norm
             desired_step[0] *= scale
             desired_step[1] *= scale
         self.correction[0] += desired_step[0]
         self.correction[1] += desired_step[1]
         if self.apply_z_correction:
             self.correction[2] += self.clamp(
-                desired_step[2], -self.max_correction_step_m, self.max_correction_step_m
+                desired_step[2], -max_correction_step_m, max_correction_step_m
             )
 
     def inflate_pose_covariance(self, fused: Odometry, fixes: list[LocalFix]) -> None:
@@ -382,6 +458,11 @@ class ShadowLocalizationFusionNode(Node):
             "gnss_aligned": self.gnss_to_odom_offset is not None,
             "fresh_sources": [fix.source for fix in fixes],
             "correction_applied": correction_applied,
+            "lidar_speed_mps": self.last_lidar_speed_mps,
+            "dynamic_correction_gain": self.dynamic_correction_gain,
+            "speed_blend_ratio": self.last_speed_ratio,
+            "effective_correction_gain": self.last_effective_correction_gain,
+            "effective_max_correction_step_m": self.last_effective_max_correction_step_m,
             "correction_m": {
                 "x": self.correction[0],
                 "y": self.correction[1],
