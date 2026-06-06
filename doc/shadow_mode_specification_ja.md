@@ -1,10 +1,13 @@
 # Shadow-mode 全体仕様書
 
 作成日: 2026-04-23
+更新日: 2026-06-06
 
 ## 1. 目的
 
 AMaRanthus の `shadow_mode` は、実車または録画データから得られるセンサ・自己位置推定情報を使い、車両を直接制御せずに仮想的な走行判断を生成・可視化・記録するための ADAS 評価基盤である。
+
+E2E TransFuser / LEAD 連携を含む最新の topic contract、LiDAR raster、route target triplet、live bag 検証計画は `doc/shadow_mode_e2e_current_status_ja.md` を参照する。
 
 このシステムは自動運転の実車制御スタックではなく、以下を目的とした shadow-mode 評価プラットフォームとして扱う。
 

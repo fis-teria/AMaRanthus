@@ -6,6 +6,7 @@
 It publishes:
 
 - `/shadow/route/target_point` (`geometry_msgs/msg/PointStamped`)
+- `/shadow/route/target_path` (`nav_msgs/msg/Path`)
 - `/shadow/route/target_status` (`std_msgs/msg/String`, JSON)
 - `/shadow/route/command` (`std_msgs/msg/String`, optional, defaults to `lane_follow`)
 
@@ -24,7 +25,15 @@ TF-based conversion before publishing `/shadow/route/gui_path`.
 For the current Shadow Mode path, `shadow_mode_virtual_control` builds
 `/shadow/virtual/path` from `livox_lane_detection` scan output or PointCloud2 input.
 `shadow_route_target` selects the first path pose near the configured lookahead
-distance and republishes it as the E2E route target.
+distance and republishes it as the E2E route target. By default the lookahead is
+speed-adaptive: it starts from `lookahead_distance_m` and adds
+`speed * lookahead_time_sec`, capped by `max_lookahead_distance_m`. If `/Odometry`
+is missing or stale, it falls back to the base lookahead distance. It also
+republishes the selected source path to `/shadow/route/target_path`, which lets
+the E2E adapter fill LEAD `target_point_previous/current/next` from the same
+route source instead of duplicating source-priority logic. `/shadow/route/target_status`
+reports the speed source, requested lookahead, actual selected distance, and
+whether the requested lookahead was reached.
 
 Standalone launch:
 

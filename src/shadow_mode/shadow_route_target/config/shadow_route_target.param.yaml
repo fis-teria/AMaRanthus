@@ -1,6 +1,7 @@
 shadow_route_target:
   ros__parameters:
     output_topic: /shadow/route/target_point
+    output_path_topic: /shadow/route/target_path
     status_topic: /shadow/route/target_status
     route_command_topic: /shadow/route/command
     publish_route_command: true
@@ -8,7 +9,11 @@ shadow_route_target:
     publish_rate_hz: 10.0
     input_timeout_sec: 0.5
     lookahead_distance_m: 15.0
+    speed_adaptive_lookahead: true
+    lookahead_time_sec: 1.2
+    max_lookahead_distance_m: 60.0
     min_forward_distance_m: 1.0
+    odom_topic: /Odometry
     source_priority: gui_route,image_lane,shadow_virtual
     gui_route_path_topic: /shadow/route/gui_path
     image_lane_path_topic: /shadow/perception/lane_path

@@ -25,6 +25,8 @@ def generate_launch_description():
                 "camera_info_topic": LaunchConfiguration("camera_lane_detection_camera_info_topic"),
                 "output_path_topic": LaunchConfiguration("output_path_topic"),
                 "status_topic": LaunchConfiguration("status_topic"),
+                "debug_mask_topic": LaunchConfiguration("debug_mask_topic"),
+                "debug_image_topic": LaunchConfiguration("debug_image_topic"),
                 "output_frame": LaunchConfiguration("output_frame"),
                 "max_process_rate_hz": ParameterValue(
                     LaunchConfiguration("max_process_rate_hz"), value_type=float
@@ -34,6 +36,18 @@ def generate_launch_description():
                 ),
                 "input_height": ParameterValue(
                     LaunchConfiguration("input_height"), value_type=int
+                ),
+                "publish_debug_images": ParameterValue(
+                    LaunchConfiguration("publish_debug_images"), value_type=bool
+                ),
+                "min_lane_confidence": ParameterValue(
+                    LaunchConfiguration("min_lane_confidence"), value_type=float
+                ),
+                "smoothing_alpha": ParameterValue(
+                    LaunchConfiguration("smoothing_alpha"), value_type=float
+                ),
+                "roi_top_ratio": ParameterValue(
+                    LaunchConfiguration("roi_top_ratio"), value_type=float
                 ),
             },
         ],
@@ -62,10 +76,18 @@ def generate_launch_description():
                 "output_path_topic", default_value="/shadow/perception/lane_path"
             ),
             DeclareLaunchArgument("status_topic", default_value="/shadow/perception/lane_status"),
+            DeclareLaunchArgument("debug_mask_topic", default_value="/shadow/perception/lane_mask"),
+            DeclareLaunchArgument(
+                "debug_image_topic", default_value="/shadow/perception/lane_debug_image"
+            ),
             DeclareLaunchArgument("output_frame", default_value="base_link"),
             DeclareLaunchArgument("max_process_rate_hz", default_value="20.0"),
             DeclareLaunchArgument("input_width", default_value="512"),
             DeclareLaunchArgument("input_height", default_value="288"),
+            DeclareLaunchArgument("publish_debug_images", default_value="false"),
+            DeclareLaunchArgument("min_lane_confidence", default_value="0.25"),
+            DeclareLaunchArgument("smoothing_alpha", default_value="0.35"),
+            DeclareLaunchArgument("roi_top_ratio", default_value="0.45"),
             node,
         ]
     )

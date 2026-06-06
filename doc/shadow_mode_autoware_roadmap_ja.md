@@ -1,5 +1,9 @@
 # Shadow-mode Autoware ADAS プロジェクト ロードマップ（3か月）
 
+更新日: 2026-06-06
+
+補足: 2026-06-06 時点では、ShadowMode / E2E planner 評価の現状まとめを `doc/shadow_mode_e2e_current_status_ja.md`、ChatGPT 相談用ブリーフを `doc/shadow_mode_e2e_chatgpt_consultation_ja.md` に追加している。今後の研究は、まず live shadow-only bag で 10Hz、LiDAR raster、route freshness、target triplet を同時に検証し、その後に camera preprocessing / LiDAR raster / target triplet の A/B を進める。
+
 ## 0. プロジェクト概要
 
 ### 目標

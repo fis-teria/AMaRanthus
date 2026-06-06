@@ -156,6 +156,7 @@ public:
     camera_info_topic_ = declare_parameter<std::string>(
       "camera_info_topic", "/sensing/camera/camera0/camera_info");
     path_topic_ = declare_parameter<std::string>("path_topic", "/shadow/e2e/path");
+    lane_path_topic_ = declare_parameter<std::string>("lane_path_topic", "/shadow/perception/lane_path");
     yolo_detections_topic_ = declare_parameter<std::string>("yolo_detections_topic", "/yolo/detections");
     output_image_topic_ = declare_parameter<std::string>("output_image_topic", "/shadow/e2e/overlay_image");
     output_compressed_image_topic_ = declare_parameter<std::string>(
@@ -169,6 +170,12 @@ public:
       "lane_input_image_topic", "/shadow/perception/lane_input_image");
     lane_input_camera_info_topic_ = declare_parameter<std::string>(
       "lane_input_camera_info_topic", "/shadow/perception/lane_input_camera_info");
+    synthesize_camera_info_when_missing_ = declare_parameter<bool>(
+      "synthesize_camera_info_when_missing", false);
+    synthetic_camera_info_focal_length_px_ = declare_parameter<double>(
+      "synthetic_camera_info_focal_length_px", 0.0);
+    synthetic_camera_info_frame_id_ = declare_parameter<std::string>(
+      "synthetic_camera_info_frame_id", "");
 
     use_tf_translation_ = declare_parameter<bool>("use_tf_translation", true);
     camera_x_m_ = declare_parameter<double>("camera_x_m", 1.2);
@@ -183,10 +190,17 @@ public:
     point_radius_px_ = std::max<int>(1, static_cast<int>(declare_parameter<int64_t>("point_radius_px", 3)));
     path_edge_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("path_edge_width_px", 2)));
     draw_waypoints_ = declare_parameter<bool>("draw_waypoints", false);
+    draw_lane_path_ = declare_parameter<bool>("draw_lane_path", true);
+    lane_path_line_width_px_ = std::max<int>(
+      1, static_cast<int>(declare_parameter<int64_t>("lane_path_line_width_px", 4)));
+    lane_path_outline_width_px_ = std::max<int>(
+      0, static_cast<int>(declare_parameter<int64_t>("lane_path_outline_width_px", 2)));
+    lane_path_ribbon_width_m_ = std::max(0.0, declare_parameter<double>("lane_path_ribbon_width_m", 0.0));
     draw_yolo_boxes_ = declare_parameter<bool>("draw_yolo_boxes", true);
     yolo_min_score_ = declare_parameter<double>("yolo_min_score", 0.25);
     yolo_box_width_px_ = std::max<int>(1, static_cast<int>(declare_parameter<int64_t>("yolo_box_width_px", 3)));
     stale_path_timeout_sec_ = declare_parameter<double>("stale_path_timeout_sec", 1.0);
+    stale_lane_path_timeout_sec_ = declare_parameter<double>("stale_lane_path_timeout_sec", 1.0);
     stale_yolo_timeout_sec_ = declare_parameter<double>("stale_yolo_timeout_sec", 1.0);
     stale_camera_info_timeout_sec_ = declare_parameter<double>("stale_camera_info_timeout_sec", 2.0);
     stale_image_timeout_sec_ = declare_parameter<double>("stale_image_timeout_sec", 0.5);
@@ -194,6 +208,13 @@ public:
     output_max_edge_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("output_max_edge_px", 640)));
     model_input_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_width_px", 1152)));
     model_input_height_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("model_input_height_px", 384)));
+    model_input_layout_ = declare_parameter<std::string>("model_input_layout", "front_center_stitched");
+    model_input_camera_count_ = std::max<int>(
+      1, static_cast<int>(declare_parameter<int64_t>("model_input_camera_count", 3)));
+    model_input_front_camera_slot_ = std::clamp<int>(
+      static_cast<int>(declare_parameter<int64_t>("model_input_front_camera_slot", 1)),
+      0, model_input_camera_count_ - 1);
+    model_input_crop_to_slot_aspect_ = declare_parameter<bool>("model_input_crop_to_slot_aspect", true);
     yolo_input_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("yolo_input_width_px", 960)));
     yolo_input_height_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("yolo_input_height_px", 640)));
     lane_input_width_px_ = std::max<int>(0, static_cast<int>(declare_parameter<int64_t>("lane_input_width_px", 960)));
@@ -205,10 +226,15 @@ public:
     const auto ribbon_color = declare_color(*this, "path_ribbon_color_rgb", {0, 210, 120});
     const auto edge_color = declare_color(*this, "path_edge_color_rgb", {180, 255, 210});
     const auto line_color = declare_color(*this, "line_color_rgb", {0, 255, 80});
+    const auto lane_color = declare_color(*this, "lane_path_color_rgb", {80, 220, 255});
+    const auto lane_outline_color = declare_color(*this, "lane_path_outline_color_rgb", {0, 0, 0});
     const auto yolo_color = declare_color(*this, "yolo_box_color_rgb", {255, 220, 0});
     path_ribbon_color_rgb_ = cv::Scalar(ribbon_color[0], ribbon_color[1], ribbon_color[2]);
     path_edge_color_rgb_ = cv::Scalar(edge_color[0], edge_color[1], edge_color[2]);
     line_color_rgb_ = cv::Scalar(line_color[0], line_color[1], line_color[2]);
+    lane_path_color_rgb_ = cv::Scalar(lane_color[0], lane_color[1], lane_color[2]);
+    lane_path_outline_color_rgb_ = cv::Scalar(
+      lane_outline_color[0], lane_outline_color[1], lane_outline_color[2]);
     yolo_box_color_rgb_ = cv::Scalar(yolo_color[0], yolo_color[1], yolo_color[2]);
 
     image_topics_ = unique_topics(image_topic_, image_fallback_topics_);
@@ -222,6 +248,11 @@ public:
       std::bind(&E2EPathOverlayNode::camera_info_callback, this, std::placeholders::_1));
     path_sub_ = create_subscription<nav_msgs::msg::Path>(
       path_topic_, 10, std::bind(&E2EPathOverlayNode::path_callback, this, std::placeholders::_1));
+    if (!lane_path_topic_.empty()) {
+      lane_path_sub_ = create_subscription<nav_msgs::msg::Path>(
+        lane_path_topic_, 10,
+        std::bind(&E2EPathOverlayNode::lane_path_callback, this, std::placeholders::_1));
+    }
     yolo_sub_ = create_subscription<yolo_msgs::msg::DetectionArray>(
       yolo_detections_topic_, rclcpp::SensorDataQoS(),
       std::bind(&E2EPathOverlayNode::yolo_callback, this, std::placeholders::_1));
@@ -255,10 +286,13 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "e2e_path_overlay C++ started images=%zu path=%s yolo=%s rate=%.2fHz output_max_edge_px=%d compressed=%s model_input=%s %dx%d yolo_input=%s %dx%d lane_input=%s %dx%d",
-      image_topics_.size(), path_topic_.c_str(), yolo_detections_topic_.c_str(), process_rate_hz_,
+      "e2e_path_overlay C++ started images=%zu path=%s lane_path=%s draw_lane=%s yolo=%s rate=%.2fHz output_max_edge_px=%d compressed=%s model_input=%s %dx%d layout=%s cameras=%d front_slot=%d crop_to_slot_aspect=%s yolo_input=%s %dx%d lane_input=%s %dx%d",
+      image_topics_.size(), path_topic_.c_str(), lane_path_topic_.c_str(),
+      draw_lane_path_ ? "true" : "false", yolo_detections_topic_.c_str(), process_rate_hz_,
       output_max_edge_px_, output_compressed_image_topic_.c_str(), model_input_image_topic_.c_str(),
-      model_input_width_px_, model_input_height_px_, yolo_input_image_topic_.c_str(),
+      model_input_width_px_, model_input_height_px_, model_input_layout_.c_str(),
+      model_input_camera_count_, model_input_front_camera_slot_,
+      model_input_crop_to_slot_aspect_ ? "true" : "false", yolo_input_image_topic_.c_str(),
       yolo_input_width_px_, yolo_input_height_px_, lane_input_image_topic_.c_str(),
       lane_input_width_px_, lane_input_height_px_);
   }
@@ -268,12 +302,19 @@ private:
   {
     latest_camera_info_ = msg;
     latest_camera_info_received_at_ = now();
+    camera_info_source_ = "topic";
   }
 
   void path_callback(const nav_msgs::msg::Path::SharedPtr msg)
   {
     latest_path_ = msg;
     latest_path_received_at_ = now();
+  }
+
+  void lane_path_callback(const nav_msgs::msg::Path::SharedPtr msg)
+  {
+    latest_lane_path_ = msg;
+    latest_lane_path_received_at_ = now();
   }
 
   void yolo_callback(const yolo_msgs::msg::DetectionArray::SharedPtr msg)
@@ -288,6 +329,61 @@ private:
     latest_image_received_at_ = now();
   }
 
+  void ensure_camera_info_from_image(
+    const sensor_msgs::msg::Image & image,
+    const rclcpp::Time & current_time)
+  {
+    if (!synthesize_camera_info_when_missing_) {
+      return;
+    }
+    if (is_fresh(latest_camera_info_received_at_, current_time, stale_camera_info_timeout_sec_)) {
+      return;
+    }
+
+    auto camera_info = std::make_shared<sensor_msgs::msg::CameraInfo>();
+    camera_info->header = image.header;
+    if (!synthetic_camera_info_frame_id_.empty()) {
+      camera_info->header.frame_id = synthetic_camera_info_frame_id_;
+    }
+    camera_info->width = image.width;
+    camera_info->height = image.height;
+    const double width = std::max(1.0, static_cast<double>(image.width));
+    const double height = std::max(1.0, static_cast<double>(image.height));
+    double focal = synthetic_camera_info_focal_length_px_;
+    if (focal <= 0.0) {
+      focal = std::max(width, height);
+    }
+    const double cx = width * 0.5;
+    const double cy = height * 0.5;
+
+    camera_info->k[0] = focal;
+    camera_info->k[1] = 0.0;
+    camera_info->k[2] = cx;
+    camera_info->k[3] = 0.0;
+    camera_info->k[4] = focal;
+    camera_info->k[5] = cy;
+    camera_info->k[6] = 0.0;
+    camera_info->k[7] = 0.0;
+    camera_info->k[8] = 1.0;
+    camera_info->p[0] = focal;
+    camera_info->p[1] = 0.0;
+    camera_info->p[2] = cx;
+    camera_info->p[3] = 0.0;
+    camera_info->p[4] = 0.0;
+    camera_info->p[5] = focal;
+    camera_info->p[6] = cy;
+    camera_info->p[7] = 0.0;
+    camera_info->p[8] = 0.0;
+    camera_info->p[9] = 0.0;
+    camera_info->p[10] = 1.0;
+    camera_info->p[11] = 0.0;
+
+    latest_camera_info_ = camera_info;
+    latest_camera_info_received_at_ = current_time;
+    camera_info_source_ = "synthetic_from_image";
+    ++synthetic_camera_info_count_;
+  }
+
   void process_timer_callback()
   {
     const auto msg = latest_image_;
@@ -298,7 +394,7 @@ private:
     if (!is_fresh(latest_image_received_at_, current_time, stale_image_timeout_sec_)) {
       OverlayTimingMs timing;
       publish_status(
-        current_time, msg, 0, 0, 0, "missing_or_stale:image",
+        current_time, msg, 0, 0, 0, 0, 0, "missing_or_stale:image",
         std::nullopt, 0, 0, timing);
       return;
     }
@@ -316,10 +412,12 @@ private:
       timing.overlay_convert = elapsed_ms(callback_start, std::chrono::steady_clock::now());
       timing.total = timing.overlay_convert;
       publish_status(
-        current_time, msg, 0, 0, 0, "unsupported_encoding:" + msg->encoding,
+        current_time, msg, 0, 0, 0, 0, 0, "unsupported_encoding:" + msg->encoding,
         std::nullopt, 0, 0, timing);
       return;
     }
+
+    ensure_camera_info_from_image(*msg, current_time);
 
     const double model_input_ms = publish_model_input_image(*source_rgb, msg->header);
     const double yolo_input_ms = publish_yolo_input_image(*source_rgb, msg->header);
@@ -334,7 +432,7 @@ private:
       timing.lane_input = lane_input_ms;
       timing.total = timing.overlay_convert;
       publish_status(
-        current_time, msg, 0, 0, 0, "unsupported_encoding:" + msg->encoding,
+        current_time, msg, 0, 0, 0, 0, 0, "unsupported_encoding:" + msg->encoding,
         std::nullopt, 0, 0, timing);
       return;
     }
@@ -357,41 +455,50 @@ private:
       timing.model_input = model_input_ms;
       timing.yolo_input = yolo_input_ms;
       timing.lane_input = lane_input_ms;
+      timing.image_publish = publish_overlay_image(overlay->image_rgb, msg->header);
+      timing.jpeg_publish = publish_compressed_overlay(overlay->image_rgb, msg->header);
       timing.total = elapsed_ms(callback_start, std::chrono::steady_clock::now());
       publish_status(
-        current_time, msg, 0, 0, 0, "missing_or_stale:" + missing, std::nullopt,
+        current_time, msg, 0, 0, 0, 0, 0, "missing_or_stale:" + missing, std::nullopt,
         overlay->image_rgb.cols, overlay->image_rgb.rows, timing);
       return;
     }
 
     const auto before_tf = std::chrono::steady_clock::now();
     auto camera_translation = get_camera_translation(*latest_path_, *msg);
+    const auto lane_path = fresh_lane_path(current_time);
+    std::optional<CameraTranslation> lane_camera_translation;
+    if (lane_path) {
+      lane_camera_translation = camera_translation;
+      if (lane_path->header.frame_id != latest_path_->header.frame_id) {
+        lane_camera_translation = get_camera_translation(*lane_path, *msg);
+      }
+    }
     const auto after_tf = std::chrono::steady_clock::now();
     const auto camera_model = camera_model_from_info(*latest_camera_info_, *msg, overlay->scale_x, overlay->scale_y);
-    const auto projected_points = project_path(*latest_path_, camera_model, camera_translation);
+    const auto projected_points = project_path(
+      *latest_path_, camera_model, camera_translation, path_ribbon_width_m_);
+    std::vector<std::optional<ProjectedPathSample>> projected_lane_points;
+    if (lane_path && lane_camera_translation) {
+      projected_lane_points = project_path(
+        *lane_path, camera_model, *lane_camera_translation, lane_path_ribbon_width_m_);
+    }
     const auto after_project = std::chrono::steady_clock::now();
     auto yolo_boxes = fresh_yolo_boxes(current_time, overlay->image_rgb.cols, overlay->image_rgb.rows);
     const auto after_yolo = std::chrono::steady_clock::now();
 
     cv::Mat drawn = overlay->image_rgb.clone();
     draw_path(drawn, projected_points);
+    draw_lane_path(drawn, projected_lane_points);
     draw_boxes(drawn, yolo_boxes);
     const auto after_draw = std::chrono::steady_clock::now();
 
-    auto output = std::make_unique<sensor_msgs::msg::Image>();
-    output->header = msg->header;
-    output->height = static_cast<uint32_t>(drawn.rows);
-    output->width = static_cast<uint32_t>(drawn.cols);
-    output->encoding = sensor_msgs::image_encodings::RGB8;
-    output->is_bigendian = 0;
-    output->step = static_cast<uint32_t>(drawn.cols * 3);
-    output->data.assign(drawn.datastart, drawn.dataend);
-    overlay_pub_->publish(std::move(output));
-    const auto after_image_publish = std::chrono::steady_clock::now();
+    const double image_publish_ms = publish_overlay_image(drawn, msg->header);
     const double jpeg_publish_ms = publish_compressed_overlay(drawn, msg->header);
     const auto after_jpeg_publish = std::chrono::steady_clock::now();
 
     const int drawn_segments = count_drawn_segments(projected_points);
+    const int lane_drawn_segments = count_drawn_segments(projected_lane_points);
     if (publish_status_every_frame_) {
       OverlayTimingMs timing;
       timing.total = elapsed_ms(callback_start, after_jpeg_publish);
@@ -403,14 +510,18 @@ private:
       timing.project = elapsed_ms(after_tf, after_project);
       timing.yolo = elapsed_ms(after_project, after_yolo);
       timing.draw = elapsed_ms(after_yolo, after_draw);
-      timing.image_publish = elapsed_ms(after_draw, after_image_publish);
+      timing.image_publish = image_publish_ms;
       timing.jpeg_publish = jpeg_publish_ms;
       publish_status(
         current_time, msg,
         static_cast<int>(std::count_if(projected_points.begin(), projected_points.end(), [](const auto & p) {
           return p.has_value();
         })),
-        drawn_segments, static_cast<int>(yolo_boxes.size()), "", camera_translation,
+        drawn_segments,
+        static_cast<int>(std::count_if(projected_lane_points.begin(), projected_lane_points.end(), [](const auto & p) {
+          return p.has_value();
+        })),
+        lane_drawn_segments, static_cast<int>(yolo_boxes.size()), "", camera_translation,
         drawn.cols, drawn.rows, timing);
     }
   }
@@ -442,10 +553,46 @@ private:
     if (!model_input_pub_) {
       return 0.0;
     }
-    auto rgb = resize_if_needed(source_rgb, cv::Size(model_input_width_px_, model_input_height_px_), cv::INTER_AREA);
+    auto rgb = make_model_input_image(source_rgb);
     auto output = make_rgb_image_msg(rgb, header);
     model_input_pub_->publish(std::move(output));
     return elapsed_ms(start, std::chrono::steady_clock::now());
+  }
+
+  cv::Mat make_model_input_image(const cv::Mat & source_rgb) const
+  {
+    const cv::Size output_size(model_input_width_px_, model_input_height_px_);
+    if (model_input_layout_ == "resize" || model_input_camera_count_ <= 1) {
+      return resize_if_needed(source_rgb, output_size, cv::INTER_AREA);
+    }
+
+    if (model_input_layout_ != "front_center_stitched") {
+      return resize_if_needed(source_rgb, output_size, cv::INTER_AREA);
+    }
+
+    const int base_slot_width = output_size.width / model_input_camera_count_;
+    if (base_slot_width <= 0) {
+      return resize_if_needed(source_rgb, output_size, cv::INTER_AREA);
+    }
+
+    const int slot_x = base_slot_width * model_input_front_camera_slot_;
+    const int slot_width =
+      model_input_front_camera_slot_ == model_input_camera_count_ - 1 ?
+      output_size.width - slot_x : base_slot_width;
+    if (slot_width <= 0) {
+      return resize_if_needed(source_rgb, output_size, cv::INTER_AREA);
+    }
+
+    cv::Mat canvas(output_size, source_rgb.type(), cv::Scalar(0, 0, 0));
+    const cv::Size slot_size(slot_width, output_size.height);
+    cv::Mat front_rgb;
+    if (model_input_crop_to_slot_aspect_) {
+      front_rgb = crop_center_to_aspect_and_resize(source_rgb, slot_size);
+    } else {
+      front_rgb = resize_if_needed(source_rgb, slot_size, cv::INTER_AREA);
+    }
+    front_rgb.copyTo(canvas(cv::Rect(slot_x, 0, slot_width, output_size.height)));
+    return canvas;
   }
 
   double publish_yolo_input_image(const cv::Mat & source_rgb, const std_msgs::msg::Header & header)
@@ -573,6 +720,19 @@ private:
     return output;
   }
 
+  double publish_overlay_image(
+    const cv::Mat & rgb,
+    const std_msgs::msg::Header & header)
+  {
+    const auto start = std::chrono::steady_clock::now();
+    if (!overlay_pub_) {
+      return 0.0;
+    }
+    auto output = make_rgb_image_msg(rgb, header);
+    overlay_pub_->publish(std::move(output));
+    return elapsed_ms(start, std::chrono::steady_clock::now());
+  }
+
   double publish_compressed_overlay(
     const cv::Mat & rgb,
     const std_msgs::msg::Header & header)
@@ -671,6 +831,29 @@ private:
     return resized;
   }
 
+  cv::Mat crop_center_to_aspect_and_resize(const cv::Mat & image, const cv::Size & target) const
+  {
+    if (image.cols <= 0 || image.rows <= 0 || target.width <= 0 || target.height <= 0) {
+      return resize_if_needed(image, target, cv::INTER_AREA);
+    }
+
+    const double target_aspect = static_cast<double>(target.width) / static_cast<double>(target.height);
+    const double source_aspect = static_cast<double>(image.cols) / static_cast<double>(image.rows);
+    int crop_width = image.cols;
+    int crop_height = image.rows;
+    if (source_aspect > target_aspect) {
+      crop_width = std::max(1, static_cast<int>(std::round(static_cast<double>(image.rows) * target_aspect)));
+    } else if (source_aspect < target_aspect) {
+      crop_height = std::max(1, static_cast<int>(std::round(static_cast<double>(image.cols) / target_aspect)));
+    }
+
+    crop_width = std::min(crop_width, image.cols);
+    crop_height = std::min(crop_height, image.rows);
+    const int crop_x = std::max(0, (image.cols - crop_width) / 2);
+    const int crop_y = std::max(0, (image.rows - crop_height) / 2);
+    return resize_if_needed(image(cv::Rect(crop_x, crop_y, crop_width, crop_height)), target, cv::INTER_AREA);
+  }
+
   CameraModel camera_model_from_info(
     const sensor_msgs::msg::CameraInfo & camera_info,
     const sensor_msgs::msg::Image & image,
@@ -723,7 +906,8 @@ private:
   std::vector<std::optional<ProjectedPathSample>> project_path(
     const nav_msgs::msg::Path & path,
     const CameraModel & camera_model,
-    const CameraTranslation & camera_translation) const
+    const CameraTranslation & camera_translation,
+    double ribbon_width_m) const
   {
     std::vector<std::optional<ProjectedPathSample>> projected;
     projected.reserve(path.poses.size());
@@ -735,11 +919,15 @@ private:
         continue;
       }
 
-      const double half_width = path_ribbon_width_m_ * 0.5;
-      const auto left = project_world_point(
-        position.x, position.y + half_width, position.z, camera_model, camera_translation);
-      const auto right = project_world_point(
-        position.x, position.y - half_width, position.z, camera_model, camera_translation);
+      const double half_width = std::max(0.0, ribbon_width_m) * 0.5;
+      std::optional<std::pair<cv::Point, double>> left;
+      std::optional<std::pair<cv::Point, double>> right;
+      if (half_width > 0.0) {
+        left = project_world_point(
+          position.x, position.y + half_width, position.z, camera_model, camera_translation);
+        right = project_world_point(
+          position.x, position.y - half_width, position.z, camera_model, camera_translation);
+      }
       projected.push_back(ProjectedPathSample{
         center->first,
         left ? std::optional<cv::Point>(left->first) : std::nullopt,
@@ -825,6 +1013,16 @@ private:
     return boxes;
   }
 
+  nav_msgs::msg::Path::SharedPtr fresh_lane_path(const rclcpp::Time & current_time) const
+  {
+    if (!draw_lane_path_ || !latest_lane_path_ ||
+      !is_fresh(latest_lane_path_received_at_, current_time, stale_lane_path_timeout_sec_))
+    {
+      return nullptr;
+    }
+    return latest_lane_path_;
+  }
+
   void draw_path(cv::Mat & image, const std::vector<std::optional<ProjectedPathSample>> & projected_points) const
   {
     std::optional<ProjectedPathSample> previous;
@@ -846,6 +1044,32 @@ private:
         }
       }
     }
+  }
+
+  void draw_lane_path(
+    cv::Mat & image,
+    const std::vector<std::optional<ProjectedPathSample>> & projected_points) const
+  {
+    std::optional<ProjectedPathSample> previous;
+    for (const auto & sample : projected_points) {
+      if (!sample) {
+        previous.reset();
+        continue;
+      }
+      if (previous) {
+        draw_lane_path_segment(image, previous->center, sample->center);
+      }
+      previous = sample;
+    }
+  }
+
+  void draw_lane_path_segment(cv::Mat & image, const cv::Point & start, const cv::Point & end) const
+  {
+    const int outline_width = lane_path_line_width_px_ + lane_path_outline_width_px_;
+    if (lane_path_outline_width_px_ > 0) {
+      cv::line(image, start, end, lane_path_outline_color_rgb_, outline_width, cv::LINE_AA);
+    }
+    cv::line(image, start, end, lane_path_color_rgb_, lane_path_line_width_px_, cv::LINE_AA);
   }
 
   void draw_path_segment(cv::Mat & image, const ProjectedPathSample & start, const ProjectedPathSample & end) const
@@ -929,6 +1153,8 @@ private:
     const sensor_msgs::msg::Image::ConstSharedPtr & image,
     int projected_count,
     int drawn_segments,
+    int lane_projected_count,
+    int lane_drawn_segments,
     int yolo_box_count,
     const std::string & skipped_reason,
     const std::optional<CameraTranslation> & camera_translation,
@@ -948,8 +1174,18 @@ private:
     payload << ",\"image_height\":" << image->height;
     payload << ",\"overlay_width\":" << overlay_width;
     payload << ",\"overlay_height\":" << overlay_height;
+    payload << ",\"model_input_layout\":\"" << json_escape(model_input_layout_) << "\"";
+    payload << ",\"model_input_camera_count\":" << model_input_camera_count_;
+    payload << ",\"model_input_front_camera_slot\":" << model_input_front_camera_slot_;
+    payload << ",\"model_input_crop_to_slot_aspect\":" << (model_input_crop_to_slot_aspect_ ? "true" : "false");
+    payload << ",\"camera_info_source\":\"" << json_escape(camera_info_source_) << "\"";
+    payload << ",\"synthesize_camera_info_when_missing\":"
+      << (synthesize_camera_info_when_missing_ ? "true" : "false");
+    payload << ",\"synthetic_camera_info_count\":" << synthetic_camera_info_count_;
     payload << ",\"projected_count\":" << projected_count;
     payload << ",\"drawn_segments\":" << drawn_segments;
+    payload << ",\"lane_projected_count\":" << lane_projected_count;
+    payload << ",\"lane_drawn_segments\":" << lane_drawn_segments;
     payload << ",\"yolo_box_count\":" << yolo_box_count;
     payload << ",\"skipped_reason\":\"" << json_escape(skipped_reason) << "\"";
     payload << ",\"timing_ms\":{";
@@ -983,6 +1219,7 @@ private:
   std::vector<std::string> image_topics_;
   std::string camera_info_topic_;
   std::string path_topic_;
+  std::string lane_path_topic_;
   std::string yolo_detections_topic_;
   std::string output_image_topic_;
   std::string output_compressed_image_topic_;
@@ -991,8 +1228,11 @@ private:
   std::string yolo_input_image_topic_;
   std::string lane_input_image_topic_;
   std::string lane_input_camera_info_topic_;
+  std::string synthetic_camera_info_frame_id_;
 
   bool use_tf_translation_{true};
+  bool synthesize_camera_info_when_missing_{false};
+  double synthetic_camera_info_focal_length_px_{0.0};
   double camera_x_m_{1.2};
   double camera_y_m_{0.1};
   double camera_z_m_{1.35};
@@ -1005,10 +1245,15 @@ private:
   int point_radius_px_{3};
   int path_edge_width_px_{2};
   bool draw_waypoints_{false};
+  bool draw_lane_path_{true};
+  int lane_path_line_width_px_{4};
+  int lane_path_outline_width_px_{2};
+  double lane_path_ribbon_width_m_{0.0};
   bool draw_yolo_boxes_{true};
   double yolo_min_score_{0.25};
   int yolo_box_width_px_{3};
   double stale_path_timeout_sec_{1.0};
+  double stale_lane_path_timeout_sec_{1.0};
   double stale_yolo_timeout_sec_{1.0};
   double stale_camera_info_timeout_sec_{2.0};
   double stale_image_timeout_sec_{0.5};
@@ -1016,21 +1261,30 @@ private:
   int output_max_edge_px_{640};
   int model_input_width_px_{1152};
   int model_input_height_px_{384};
+  std::string model_input_layout_{"front_center_stitched"};
+  int model_input_camera_count_{3};
+  int model_input_front_camera_slot_{1};
+  bool model_input_crop_to_slot_aspect_{true};
   int yolo_input_width_px_{960};
   int yolo_input_height_px_{640};
   int lane_input_width_px_{960};
   int lane_input_height_px_{640};
   int output_compressed_jpeg_quality_{80};
   bool publish_status_every_frame_{true};
+  std::string camera_info_source_{"missing"};
+  int synthetic_camera_info_count_{0};
 
   cv::Scalar path_ribbon_color_rgb_{0, 210, 120};
   cv::Scalar path_edge_color_rgb_{180, 255, 210};
   cv::Scalar line_color_rgb_{0, 255, 80};
+  cv::Scalar lane_path_color_rgb_{80, 220, 255};
+  cv::Scalar lane_path_outline_color_rgb_{0, 0, 0};
   cv::Scalar yolo_box_color_rgb_{255, 220, 0};
 
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> image_subs_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr lane_path_sub_;
   rclcpp::Subscription<yolo_msgs::msg::DetectionArray>::SharedPtr yolo_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr overlay_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_overlay_pub_;
@@ -1044,10 +1298,12 @@ private:
   sensor_msgs::msg::Image::ConstSharedPtr latest_image_;
   sensor_msgs::msg::CameraInfo::SharedPtr latest_camera_info_;
   nav_msgs::msg::Path::SharedPtr latest_path_;
+  nav_msgs::msg::Path::SharedPtr latest_lane_path_;
   yolo_msgs::msg::DetectionArray::SharedPtr latest_yolo_detections_;
   std::optional<rclcpp::Time> latest_image_received_at_;
   std::optional<rclcpp::Time> latest_camera_info_received_at_;
   std::optional<rclcpp::Time> latest_path_received_at_;
+  std::optional<rclcpp::Time> latest_lane_path_received_at_;
   std::optional<rclcpp::Time> latest_yolo_received_at_;
 
   tf2_ros::Buffer tf_buffer_;

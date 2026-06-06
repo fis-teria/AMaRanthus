@@ -30,6 +30,14 @@ def generate_launch_description():
             DeclareLaunchArgument("lead_strict_weight_load", default_value="false"),
             DeclareLaunchArgument("lead_probe_on_startup", default_value="true"),
             DeclareLaunchArgument("lead_force_timm_pretrained_off", default_value="true"),
+            DeclareLaunchArgument("lead_lidar_raster_enabled", default_value="true"),
+            DeclareLaunchArgument("lead_lidar_flip_y_axis", default_value="true"),
+            DeclareLaunchArgument("lead_lidar_history_size", default_value="1"),
+            DeclareLaunchArgument("lead_lidar_max_points", default_value="250000"),
+            DeclareLaunchArgument(
+                "lead_lidar_expected_frame_ids",
+                default_value="body,base_link",
+            ),
             DeclareLaunchArgument(
                 "image_topic",
                 default_value="/sensing/camera/camera0/image_rect_color",
@@ -39,12 +47,33 @@ def generate_launch_description():
                 "camera_info_topic",
                 default_value="/sensing/camera/camera0/camera_info",
             ),
+            DeclareLaunchArgument("synthesize_camera_info_when_missing", default_value="false"),
+            DeclareLaunchArgument("synthetic_camera_info_focal_length_px", default_value="0.0"),
+            DeclareLaunchArgument("synthetic_camera_info_frame_id", default_value=""),
             DeclareLaunchArgument("pointcloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("sensor_input_mode", default_value="auto"),
             DeclareLaunchArgument("odom_topic", default_value="/Odometry"),
             DeclareLaunchArgument("target_point_topic", default_value="/shadow/route/target_point"),
+            DeclareLaunchArgument("target_path_topic", default_value="/shadow/route/target_path"),
+            DeclareLaunchArgument("use_target_path_triplet", default_value="true"),
+            DeclareLaunchArgument("target_path_previous_distance_m", default_value="5.0"),
+            DeclareLaunchArgument("target_path_current_distance_m", default_value="15.0"),
+            DeclareLaunchArgument("target_path_next_distance_m", default_value="25.0"),
+            DeclareLaunchArgument("target_path_speed_adaptive", default_value="true"),
+            DeclareLaunchArgument("target_path_speed_lookahead_time_sec", default_value="1.2"),
+            DeclareLaunchArgument("target_path_max_current_distance_m", default_value="60.0"),
+            DeclareLaunchArgument("target_path_min_forward_distance_m", default_value="0.5"),
+            DeclareLaunchArgument(
+                "target_path_expected_frame_ids",
+                default_value="base_link,body",
+            ),
+            DeclareLaunchArgument("target_path_require_expected_frame", default_value="true"),
             DeclareLaunchArgument("route_command_topic", default_value="/shadow/route/command"),
             DeclareLaunchArgument("output_frame", default_value="base_link"),
+            DeclareLaunchArgument(
+                "raw_lead_path_topic",
+                default_value="/shadow/e2e/path_raw_lead",
+            ),
             DeclareLaunchArgument("publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("input_timeout_sec", default_value="0.5"),
             DeclareLaunchArgument("camera_only_confidence_scale", default_value="0.75"),
@@ -52,6 +81,7 @@ def generate_launch_description():
             DeclareLaunchArgument("waypoint_spacing_m", default_value="1.5"),
             DeclareLaunchArgument("wheel_base_m", default_value="2.7"),
             DeclareLaunchArgument("require_target_point", default_value="true"),
+            DeclareLaunchArgument("lead_flip_y_axis", default_value="true"),
             DeclareLaunchArgument("disable_aux_heads", default_value="true"),
             DeclareLaunchArgument("single_checkpoint", default_value="true"),
             DeclareLaunchArgument("allow_int8", default_value="false"),
@@ -95,18 +125,88 @@ def generate_launch_description():
                         "lead_force_timm_pretrained_off": ParameterValue(
                             LaunchConfiguration("lead_force_timm_pretrained_off"), value_type=bool
                         ),
+                        "lead_lidar_raster_enabled": ParameterValue(
+                            LaunchConfiguration("lead_lidar_raster_enabled"),
+                            value_type=bool,
+                        ),
+                        "lead_lidar_flip_y_axis": ParameterValue(
+                            LaunchConfiguration("lead_lidar_flip_y_axis"),
+                            value_type=bool,
+                        ),
+                        "lead_lidar_history_size": ParameterValue(
+                            LaunchConfiguration("lead_lidar_history_size"),
+                            value_type=int,
+                        ),
+                        "lead_lidar_max_points": ParameterValue(
+                            LaunchConfiguration("lead_lidar_max_points"),
+                            value_type=int,
+                        ),
+                        "lead_lidar_expected_frame_ids": LaunchConfiguration(
+                            "lead_lidar_expected_frame_ids"
+                        ),
                         "image_topic": LaunchConfiguration("image_topic"),
                         "disable_image_fallback_topics": ParameterValue(
                             LaunchConfiguration("disable_image_fallback_topics"),
                             value_type=bool,
                         ),
                         "camera_info_topic": LaunchConfiguration("camera_info_topic"),
+                        "synthesize_camera_info_when_missing": ParameterValue(
+                            LaunchConfiguration("synthesize_camera_info_when_missing"),
+                            value_type=bool,
+                        ),
+                        "synthetic_camera_info_focal_length_px": ParameterValue(
+                            LaunchConfiguration("synthetic_camera_info_focal_length_px"),
+                            value_type=float,
+                        ),
+                        "synthetic_camera_info_frame_id": LaunchConfiguration(
+                            "synthetic_camera_info_frame_id"
+                        ),
                         "pointcloud_topic": LaunchConfiguration("pointcloud_topic"),
                         "sensor_input_mode": LaunchConfiguration("sensor_input_mode"),
                         "odom_topic": LaunchConfiguration("odom_topic"),
                         "target_point_topic": LaunchConfiguration("target_point_topic"),
+                        "target_path_topic": LaunchConfiguration("target_path_topic"),
+                        "use_target_path_triplet": ParameterValue(
+                            LaunchConfiguration("use_target_path_triplet"), value_type=bool
+                        ),
+                        "target_path_previous_distance_m": ParameterValue(
+                            LaunchConfiguration("target_path_previous_distance_m"),
+                            value_type=float,
+                        ),
+                        "target_path_current_distance_m": ParameterValue(
+                            LaunchConfiguration("target_path_current_distance_m"),
+                            value_type=float,
+                        ),
+                        "target_path_next_distance_m": ParameterValue(
+                            LaunchConfiguration("target_path_next_distance_m"),
+                            value_type=float,
+                        ),
+                        "target_path_speed_adaptive": ParameterValue(
+                            LaunchConfiguration("target_path_speed_adaptive"),
+                            value_type=bool,
+                        ),
+                        "target_path_speed_lookahead_time_sec": ParameterValue(
+                            LaunchConfiguration("target_path_speed_lookahead_time_sec"),
+                            value_type=float,
+                        ),
+                        "target_path_max_current_distance_m": ParameterValue(
+                            LaunchConfiguration("target_path_max_current_distance_m"),
+                            value_type=float,
+                        ),
+                        "target_path_min_forward_distance_m": ParameterValue(
+                            LaunchConfiguration("target_path_min_forward_distance_m"),
+                            value_type=float,
+                        ),
+                        "target_path_expected_frame_ids": LaunchConfiguration(
+                            "target_path_expected_frame_ids"
+                        ),
+                        "target_path_require_expected_frame": ParameterValue(
+                            LaunchConfiguration("target_path_require_expected_frame"),
+                            value_type=bool,
+                        ),
                         "route_command_topic": LaunchConfiguration("route_command_topic"),
                         "output_frame": LaunchConfiguration("output_frame"),
+                        "raw_lead_path_topic": LaunchConfiguration("raw_lead_path_topic"),
                         "publish_rate_hz": ParameterValue(
                             LaunchConfiguration("publish_rate_hz"), value_type=float
                         ),
@@ -127,6 +227,9 @@ def generate_launch_description():
                         ),
                         "require_target_point": ParameterValue(
                             LaunchConfiguration("require_target_point"), value_type=bool
+                        ),
+                        "lead_flip_y_axis": ParameterValue(
+                            LaunchConfiguration("lead_flip_y_axis"), value_type=bool
                         ),
                         "disable_aux_heads": ParameterValue(
                             LaunchConfiguration("disable_aux_heads"), value_type=bool

@@ -76,7 +76,13 @@ ROS_POINTCLOUD_Z_MAX_M="${ROS_POINTCLOUD_Z_MAX_M:-3.0}"
 ROS_ROUTE_POINTCLOUD_TOPIC="${ROS_ROUTE_POINTCLOUD_TOPIC:-/shadow/route/pointcloud}"
 ROS_ROUTE_POINTCLOUD_MAX_POINTS="${ROS_ROUTE_POINTCLOUD_MAX_POINTS:-1500}"
 ROS_ROUTE_PATH_TOPIC="${ROS_ROUTE_PATH_TOPIC:-/shadow/route/gui_path}"
+ROS_ROUTE_TARGET_TOPIC="${ROS_ROUTE_TARGET_TOPIC:-/shadow/route/target_point}"
+ROS_ROUTE_TARGET_PATH_TOPIC="${ROS_ROUTE_TARGET_PATH_TOPIC:-/shadow/route/target_path}"
 ROS_E2E_PATH_TOPIC="${ROS_E2E_PATH_TOPIC:-/shadow/e2e/path}"
+ROS_E2E_RAW_LEAD_PATH_TOPIC="${ROS_E2E_RAW_LEAD_PATH_TOPIC:-/shadow/e2e/path_raw_lead}"
+ROS_E2E_STATUS_TOPIC="${ROS_E2E_STATUS_TOPIC:-/shadow/e2e/status}"
+ROS_E2E_MODEL_INPUT_IMAGE_TOPIC="${ROS_E2E_MODEL_INPUT_IMAGE_TOPIC:-/shadow/e2e/model_input_image}"
+ROS_E2E_POINTCLOUD_TOPIC="${ROS_E2E_POINTCLOUD_TOPIC:-/cloud_registered_body}"
 ROS_SCAN_TOPIC="${ROS_SCAN_TOPIC:-/scan}"
 ROS_LANE_TOPIC="${ROS_LANE_TOPIC:-/livox/lane_detection/scan}"
 ROS_OBJECTS_TOPIC="${ROS_OBJECTS_TOPIC:-/livox/lane_detection/objects}"
@@ -111,6 +117,7 @@ IRODORI_TTS_BACKEND_WAIT_SEC="${IRODORI_TTS_BACKEND_WAIT_SEC:-5}"
 IRODORI_TTS_BACKEND_LOG_DIR="${IRODORI_TTS_BACKEND_LOG_DIR:-${IRODORI_TTS_LITE_DIR}/runtime/logs}"
 ENABLE_ROUTE_VOICE_GUIDANCE="${ENABLE_ROUTE_VOICE_GUIDANCE:-1}"
 ROUTE_VOICE_PREANNOUNCE_DISTANCE_M="${ROUTE_VOICE_PREANNOUNCE_DISTANCE_M:-300.0}"
+ROUTE_VOICE_EARLY_PREANNOUNCE_DISTANCE_M="${ROUTE_VOICE_EARLY_PREANNOUNCE_DISTANCE_M:-1000.0}"
 
 export PYTHONUNBUFFERED
 
@@ -248,7 +255,13 @@ uv run main.py \
     --ros-route-pointcloud-topic "${ROS_ROUTE_POINTCLOUD_TOPIC}" \
     --ros-route-pointcloud-max-points "${ROS_ROUTE_POINTCLOUD_MAX_POINTS}" \
     --ros-route-path-topic "${ROS_ROUTE_PATH_TOPIC}" \
+    --ros-route-target-topic "${ROS_ROUTE_TARGET_TOPIC}" \
+    --ros-route-target-path-topic "${ROS_ROUTE_TARGET_PATH_TOPIC}" \
     --ros-e2e-path-topic "${ROS_E2E_PATH_TOPIC}" \
+    --ros-e2e-raw-lead-path-topic "${ROS_E2E_RAW_LEAD_PATH_TOPIC}" \
+    --ros-e2e-status-topic "${ROS_E2E_STATUS_TOPIC}" \
+    --ros-e2e-model-input-image-topic "${ROS_E2E_MODEL_INPUT_IMAGE_TOPIC}" \
+    --ros-e2e-pointcloud-topic "${ROS_E2E_POINTCLOUD_TOPIC}" \
     --ros-scan-topic "${ROS_SCAN_TOPIC}" \
     --ros-lane-topic "${ROS_LANE_TOPIC}" \
     --ros-objects-topic "${ROS_OBJECTS_TOPIC}" \
@@ -273,6 +286,7 @@ uv run main.py \
     --rosbag-record-preset "${ROSBAG_RECORD_PRESET}" \
     --tts-backend-url "$(tts_backend_health_url | sed 's#/health$##')" \
     --route-voice-preannounce-distance-m "${ROUTE_VOICE_PREANNOUNCE_DISTANCE_M}" \
+    --route-voice-early-preannounce-distance-m "${ROUTE_VOICE_EARLY_PREANNOUNCE_DISTANCE_M}" \
     --gpu-monitor-interval-sec "${GPU_MONITOR_INTERVAL_SEC}" \
     "${EXTRA_ARGS[@]}" \
     "$@"

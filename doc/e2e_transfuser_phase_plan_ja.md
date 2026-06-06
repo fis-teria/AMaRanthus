@@ -1,12 +1,15 @@
 # e2e_transfuser フェーズ別実装方針
 
 作成日: 2026-05-13
+更新日: 2026-06-06
 
 ## 1. 目的
 
 `e2e_transfuser` は、LEAD / TransFuser V6 系モデルを Helianthus / AMaRanthus の ROS 2 環境へ接続し、実車制御に介入せず `/shadow/e2e/*` へ End-to-End 走行判断を publish するための ADAS パッケージである。
 
 本ドキュメントは Phase 0 から Phase 4 までの実装方針、成果物、受け入れ基準をまとめる。詳細な topic 契約と軽量化方針は `doc/lead_transfuser_ros2_specification_ja.md` を正とする。
+
+2026-06-06 時点の現状まとめと検証計画は `doc/shadow_mode_e2e_current_status_ja.md`、ChatGPT 相談用の入力フォーマットは `doc/shadow_mode_e2e_chatgpt_consultation_ja.md` に分離した。
 
 ## 2. 前提
 

@@ -61,12 +61,15 @@ coordinates from `!3d<lat>!4d<lon>` over map-center coordinates like
 
 After current and goal are available, tap `Search road routes` to request OSRM
 route alternatives. The selected route geometry is converted into local
-`base_link` path points and published on `/shadow/route/gui_path`. The selected
-route also carries guidance steps in `/phone/location/status`, so the PC GUI can
-show the next maneuver and the step list on the Map view. Guidance text uses
-OSRM step `name`, `ref`, and `destinations` when available, and otherwise falls
-back to intersection-style prompts such as `次の交差点を右折`. The default
-public OSRM endpoint supports alternatives, but may reject `exclude` options for
+`base_link` path points and published on `/shadow/route/gui_path`. The bridge
+keeps this path speed-agnostic and publishes a longer local horizon by default
+(`max_path_length_m:=400.0`, `path_step_m:=2.0`) so downstream route-target
+selection can choose speed-dependent lookahead points. The selected route also
+carries guidance steps in `/phone/location/status`, so the PC GUI can show the
+next maneuver and the step list on the Map view. Guidance text uses OSRM step
+`name`, `ref`, and `destinations` when available, and otherwise falls back to
+intersection-style prompts such as `次の交差点を右折`. The default public OSRM
+endpoint supports alternatives, but may reject `exclude` options for
 motorway/toll/ferry. When that happens, the bridge returns a warning and retries
 without excludes. Use `osrm_service_url:=...` to point at a self-hosted OSRM
 endpoint with the desired exclude support.
@@ -90,8 +93,9 @@ fresh. The default stale timeout is 3 seconds. Tune it with
 - `/vehicle/gps_status` (`std_msgs/msg/String`): compact status for the GUI badge.
 - `/phone/route/goal` (`std_msgs/msg/String`, JSON): destination latitude /
   longitude and route metadata.
-- `/shadow/route/gui_path` (`nav_msgs/msg/Path`): straight local `base_link` path
-  generated from current location to the goal.
+- `/shadow/route/gui_path` (`nav_msgs/msg/Path`): selected OSRM route geometry or
+  straight local `base_link` fallback path generated from current location to the
+  goal.
 - `/phone/location/status` (`std_msgs/msg/String`, JSON): bridge health/status.
 
 The route path is intentionally local. It does not replace `/Odometry`; it only

@@ -7,6 +7,8 @@ camera_lane_detection:
     camera_info_topic: /sensing/camera/camera0/camera_info
     output_path_topic: /shadow/perception/lane_path
     status_topic: /shadow/perception/lane_status
+    debug_mask_topic: /shadow/perception/lane_mask
+    debug_image_topic: /shadow/perception/lane_debug_image
     output_frame: base_link
     max_process_rate_hz: 20.0
     input_width: 512
@@ -25,4 +27,21 @@ camera_lane_detection:
     assumed_lane_width_m: 3.5
     fallback_horizontal_fov_deg: 70.0
     min_mask_pixels_per_band: 12
+    publish_debug_images: false
+    white_hsv_low: [0, 0, 185]
+    white_hsv_high: [180, 70, 255]
+    yellow_hsv_low: [15, 45, 90]
+    yellow_hsv_high: [40, 255, 255]
+    roi_left_bottom_ratio: 0.08
+    roi_left_top_ratio: 0.40
+    roi_right_top_ratio: 0.60
+    roi_right_bottom_ratio: 0.92
+    morph_kernel_size: 5
+    min_fit_points_per_side: 3
+    min_lane_confidence: 0.25
+    smoothing_alpha: 0.35
+    max_smoothing_jump_m: 1.5
+    min_lane_width_m: 2.2
+    max_lane_width_m: 4.8
+    max_abs_lateral_m: 5.0
     publish_status_every_frame: true

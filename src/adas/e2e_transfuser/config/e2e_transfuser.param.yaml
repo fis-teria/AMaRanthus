@@ -12,18 +12,38 @@ e2e_transfuser:
     lead_strict_weight_load: false
     lead_probe_on_startup: true
     lead_force_timm_pretrained_off: true
+    lead_lidar_raster_enabled: true
+    lead_lidar_flip_y_axis: true
+    lead_lidar_history_size: 1
+    lead_lidar_max_points: 250000
+    lead_lidar_expected_frame_ids: body,base_link
     image_topic: /sensing/camera/camera0/image_rect_color
     image_fallback_topics:
       - /sensing/camera/camera0/image_rect_color
       - /image_rect_color
     disable_image_fallback_topics: false
     camera_info_topic: /sensing/camera/camera0/camera_info
+    synthesize_camera_info_when_missing: false
+    synthetic_camera_info_focal_length_px: 0.0
+    synthetic_camera_info_frame_id: ""
     pointcloud_topic: /livox/lidar
     sensor_input_mode: auto
     odom_topic: /Odometry
     target_point_topic: /shadow/route/target_point
+    target_path_topic: /shadow/route/target_path
+    use_target_path_triplet: true
+    target_path_previous_distance_m: 5.0
+    target_path_current_distance_m: 15.0
+    target_path_next_distance_m: 25.0
+    target_path_speed_adaptive: true
+    target_path_speed_lookahead_time_sec: 1.2
+    target_path_max_current_distance_m: 60.0
+    target_path_min_forward_distance_m: 0.5
+    target_path_expected_frame_ids: base_link,body
+    target_path_require_expected_frame: true
     route_command_topic: /shadow/route/command
     output_frame: base_link
+    raw_lead_path_topic: /shadow/e2e/path_raw_lead
     publish_rate_hz: 10.0
     input_timeout_sec: 0.5
     camera_only_confidence_scale: 0.75
@@ -35,6 +55,7 @@ e2e_transfuser:
     require_target_point: true
     enable_debug_markers: true
     enable_autoware_trajectory: false
+    lead_flip_y_axis: true
     disable_aux_heads: true
     single_checkpoint: true
     allow_int8: false

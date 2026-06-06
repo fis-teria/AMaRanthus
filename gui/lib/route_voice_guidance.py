@@ -31,6 +31,7 @@ class RouteVoiceGuidance(QObject):
         enabled: bool,
         backend_url: str,
         preannounce_distance_m: float,
+        early_preannounce_distance_m: float = 1000.0,
         request_timeout_sec: float = 300.0,
         parent=None,
     ):
@@ -38,11 +39,16 @@ class RouteVoiceGuidance(QObject):
         self._enabled = bool(enabled)
         self._backend_url = backend_url.rstrip("/") + "/"
         self._preannounce_distance_m = max(1.0, float(preannounce_distance_m))
+        self._early_preannounce_distance_m = max(
+            self._preannounce_distance_m,
+            float(early_preannounce_distance_m),
+        )
         self._request_timeout_sec = max(1.0, float(request_timeout_sec))
         self._log_callback: Optional[LogCallback] = None
         self._route_signature = ""
         self._last_next_step_key: Optional[str] = None
         self._progress_announced: set[str] = set()
+        self._early_preannounced: set[str] = set()
         self._preannounced: set[str] = set()
         self._request_queue: deque[dict] = deque(maxlen=8)
         self._request_in_flight = False
@@ -64,6 +70,7 @@ class RouteVoiceGuidance(QObject):
                     (
                         "Route voice guidance enabled: "
                         f"backend={self._backend_url}, "
+                        f"early_preannounce={self._early_preannounce_distance_m:.0f}m, "
                         f"preannounce={self._preannounce_distance_m:.0f}m"
                     ),
                 )
@@ -90,6 +97,7 @@ class RouteVoiceGuidance(QObject):
             self._route_signature = route_signature
             self._last_next_step_key = None
             self._progress_announced.clear()
+            self._early_preannounced.clear()
             self._preannounced.clear()
             self._log("INFO", "Route voice guidance state reset for new route")
 
@@ -108,8 +116,19 @@ class RouteVoiceGuidance(QObject):
             self._enqueue_guidance_request(next_step, dist_to_step_m, reason="next_step")
             announced_progress = True
 
+        should_early_preannounce = (
+            not announced_progress
+            and step_key not in self._early_preannounced
+            and next_step.route_index > current_index
+            and self._preannounce_distance_m < dist_to_step_m <= self._early_preannounce_distance_m
+        )
+        if should_early_preannounce:
+            self._early_preannounced.add(step_key)
+            self._enqueue_guidance_request(next_step, dist_to_step_m, reason="early_preannounce")
+
         should_preannounce = (
             not announced_progress
+            and not should_early_preannounce
             and step_key not in self._preannounced
             and next_step.route_index > current_index
             and 0.0 < dist_to_step_m <= self._preannounce_distance_m

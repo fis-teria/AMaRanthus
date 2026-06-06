@@ -96,10 +96,11 @@ IRODORI_TTS_BACKEND_PORT=8767 ./gui/run_gui.sh
 IRODORI_TTS_CONFIG=/path/to/config.yaml ./gui/run_gui.sh
 ```
 
-phone location bridge の OSRM ルートに `guidance_steps` がある場合、GUI は既定で Irodori backend に次の案内を渡し、生成された音声を再生します。案内ステップが進んだ時と、次の交差点などの約 300 m 手前で読み上げます。
+phone location bridge の OSRM ルートに `guidance_steps` がある場合、GUI は既定で Irodori backend に次の案内を渡し、生成された音声を再生します。案内ステップが進んだ時と、次の交差点などの約 1 km 手前、約 300 m 手前で読み上げます。
 
 ```bash
 ENABLE_ROUTE_VOICE_GUIDANCE=0 ./gui/run_gui.sh
+ROUTE_VOICE_EARLY_PREANNOUNCE_DISTANCE_M=800 ./gui/run_gui.sh
 ROUTE_VOICE_PREANNOUNCE_DISTANCE_M=200 ./gui/run_gui.sh
 ```
 
@@ -173,14 +174,21 @@ uv run main.py \
 - `--ros-gps-topic`: `std_msgs/msg/String`
 - `--tts-backend-url`: Irodori-TTS-Lite backend URL。既定は `http://127.0.0.1:8766` です。
 - `--disable-route-voice-guidance`: OSRM / phone route guidance の音声案内を無効化します。
+- `--route-voice-early-preannounce-distance-m`: 次の案内地点に近づいた時の早めの事前読み上げ距離。既定は `1000.0` m です。
 - `--route-voice-preannounce-distance-m`: 次の案内地点に近づいた時の事前読み上げ距離。既定は `300.0` m です。
 - `--gpu-monitor-interval-sec`: `nvidia-smi` でGPU使用率を読む周期。既定は `1.0` 秒です。
 - `--disable-gpu-monitor`: GPU監視を無効化します。`nvidia-smi` が使えない環境でもGUI起動自体は継続します。
 - `--rosbag-record-dir`: GUIの `ROS bag` パネルから録画したbagを保存するディレクトリ。既定は `Data/gui_rosbags` です。
-- `--rosbag-record-topic`: 既定の点群、カメラ、Odometry/GPS、TFに加えて録画するtopic。複数指定できます。
+- `--ros-e2e-pointcloud-topic`: E2E LiDAR raster 用の `PointCloud2`。既定は `/cloud_registered_body` です。
+- `--ros-e2e-model-input-image-topic`: E2E model に渡す前処理済み画像。既定は `/shadow/e2e/model_input_image` です。
+- `--ros-e2e-status-topic`: E2E runtime status。既定は `/shadow/e2e/status` です。
+- `--ros-e2e-raw-lead-path-topic`: LEAD 座標解釈前の raw path。既定は `/shadow/e2e/path_raw_lead` です。
+- `--ros-route-target-topic`: route target point。既定は `/shadow/route/target_point` です。
+- `--ros-route-target-path-topic`: route target source から選択された Path。既定は `/shadow/route/target_path` です。
+- `--rosbag-record-topic`: 既定の点群、カメラ、Odometry/GPS、route target、E2E診断、TFに加えて録画するtopic。複数指定できます。
 - `--rosbag-record-preset`: 起動時に選択する録画プリセット。既定は `E2E input` です。
 
-GUIの `ROS bag` パネルでは、録画プリセットを選んでから `録画` で `ros2 bag record` を開始し、`録画停止` でSIGINT停止してmetadataを書き出します。`E2E input` はShadowMode E2E replay向けの入力topicだけを記録し、`GUI replay` はGUI表示確認向けにoverlayやshadow出力も含めます。`再生` は最後に録画したbag、または `選択` で指定したbagディレクトリを `ros2 bag play` します。`gui/run_gui.sh` からは保存先、起動時プリセット、追加topicを環境変数で上書きできます。
+GUIの `ROS bag` パネルでは、録画プリセットを選んでから `録画` で `ros2 bag record` を開始し、`録画停止` でSIGINT停止してmetadataを書き出します。`E2E input` はShadowMode E2E replay向けの入力topicに加えて `/cloud_registered_body`、`/shadow/e2e/model_input_image`、`/shadow/e2e/status`、`/shadow/e2e/path_raw_lead`、`/shadow/route/target_point`、`/shadow/route/target_path`、TFを記録します。`GUI replay` はGUI表示確認向けにoverlayやshadow出力も含めます。`再生` は最後に録画したbag、または `選択` で指定したbagディレクトリを `ros2 bag play` します。`gui/run_gui.sh` からは保存先、起動時プリセット、追加topicを環境変数で上書きできます。
 
 ```bash
 ROSBAG_RECORD_DIR=/path/to/bags ./gui/run_gui.sh

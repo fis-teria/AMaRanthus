@@ -19,6 +19,7 @@ def generate_launch_description():
             param_file,
             {
                 "output_topic": LaunchConfiguration("output_topic"),
+                "output_path_topic": LaunchConfiguration("output_path_topic"),
                 "status_topic": LaunchConfiguration("status_topic"),
                 "route_command_topic": LaunchConfiguration("route_command_topic"),
                 "publish_route_command": ParameterValue(
@@ -34,9 +35,19 @@ def generate_launch_description():
                 "lookahead_distance_m": ParameterValue(
                     LaunchConfiguration("lookahead_distance_m"), value_type=float
                 ),
+                "speed_adaptive_lookahead": ParameterValue(
+                    LaunchConfiguration("speed_adaptive_lookahead"), value_type=bool
+                ),
+                "lookahead_time_sec": ParameterValue(
+                    LaunchConfiguration("lookahead_time_sec"), value_type=float
+                ),
+                "max_lookahead_distance_m": ParameterValue(
+                    LaunchConfiguration("max_lookahead_distance_m"), value_type=float
+                ),
                 "min_forward_distance_m": ParameterValue(
                     LaunchConfiguration("min_forward_distance_m"), value_type=float
                 ),
+                "odom_topic": LaunchConfiguration("odom_topic"),
                 "source_priority": LaunchConfiguration("source_priority"),
                 "gui_route_path_topic": LaunchConfiguration("gui_route_path_topic"),
                 "image_lane_path_topic": LaunchConfiguration("image_lane_path_topic"),
@@ -64,6 +75,7 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("output_topic", default_value="/shadow/route/target_point"),
+            DeclareLaunchArgument("output_path_topic", default_value="/shadow/route/target_path"),
             DeclareLaunchArgument("status_topic", default_value="/shadow/route/target_status"),
             DeclareLaunchArgument("route_command_topic", default_value="/shadow/route/command"),
             DeclareLaunchArgument("publish_route_command", default_value="true"),
@@ -71,7 +83,11 @@ def generate_launch_description():
             DeclareLaunchArgument("publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("input_timeout_sec", default_value="0.5"),
             DeclareLaunchArgument("lookahead_distance_m", default_value="15.0"),
+            DeclareLaunchArgument("speed_adaptive_lookahead", default_value="true"),
+            DeclareLaunchArgument("lookahead_time_sec", default_value="1.2"),
+            DeclareLaunchArgument("max_lookahead_distance_m", default_value="60.0"),
             DeclareLaunchArgument("min_forward_distance_m", default_value="1.0"),
+            DeclareLaunchArgument("odom_topic", default_value="/Odometry"),
             DeclareLaunchArgument(
                 "source_priority", default_value="gui_route,image_lane,shadow_virtual"
             ),

@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import sys
 import time
@@ -60,6 +61,10 @@ class LeadTorchRuntime:
         torch_lib: str = "",
         force_timm_pretrained_off: bool = True,
         input_preprocess_backend: str = "cpu",
+        lidar_raster_enabled: bool = True,
+        lidar_flip_y_axis: bool = True,
+        lidar_history_size: int = 1,
+        lidar_max_points: int = 250000,
     ):
         self.lead_project_root = lead_project_root
         self.model_path = model_path
@@ -72,6 +77,10 @@ class LeadTorchRuntime:
         self.torch_lib = torch_lib
         self.force_timm_pretrained_off = force_timm_pretrained_off
         self.input_preprocess_backend = str(input_preprocess_backend).lower()
+        self.lidar_raster_enabled = bool(lidar_raster_enabled)
+        self.lidar_flip_y_axis = bool(lidar_flip_y_axis)
+        self.lidar_history_size = max(1, int(lidar_history_size))
+        self.lidar_max_points = max(0, int(lidar_max_points))
         self.loaded = False
         self.error = ""
         self.nets = []
@@ -85,6 +94,19 @@ class LeadTorchRuntime:
         self.last_latency_ms = None
         self.last_preprocess_latency_ms = None
         self.last_error = ""
+        self._lidar_history: list[tuple[tuple[int, int, str], Any]] = []
+        self.last_lidar_raster_status: dict[str, Any] = {
+            "enabled": self.lidar_raster_enabled,
+            "source": "zero",
+            "reason": "not_started",
+            "input_points": 0,
+            "finite_points": 0,
+            "used_points": 0,
+            "nonzero_pixels": 0,
+            "max_value": 0.0,
+            "frame_id": "",
+            "history_size": 0,
+        }
 
     def load(self, *, extra_roots: list[Path] | None = None) -> bool:
         try:
@@ -303,14 +325,17 @@ class LeadTorchRuntime:
         pointcloud_msg=None,
         speed_mps: float = 0.0,
         target_xy: tuple[float, float] = (15.0, 0.0),
+        target_points_xy=None,
         command: str = "lane_follow",
     ) -> dict[str, Any]:
         start = time.perf_counter()
         if self.input_preprocess_backend == "torch_cuda" and self.device.type == "cuda":
             data = self._build_data_from_ros_torch_cuda(
                 image_msg=image_msg,
+                pointcloud_msg=pointcloud_msg,
                 speed_mps=speed_mps,
                 target_xy=target_xy,
+                target_points_xy=target_points_xy,
                 command=command,
             )
             self.torch.cuda.synchronize(self.device)
@@ -320,8 +345,10 @@ class LeadTorchRuntime:
         image = self._image_msg_to_rgb_array(image_msg)
         data = self.build_data_from_arrays(
             image_rgb=image,
+            rasterized_lidar=self.rasterized_lidar_from_pointcloud(pointcloud_msg),
             speed_mps=speed_mps,
             target_xy=target_xy,
+            target_points_xy=target_points_xy,
             command=command,
         )
         self.last_preprocess_latency_ms = (time.perf_counter() - start) * 1000.0
@@ -338,8 +365,10 @@ class LeadTorchRuntime:
         self,
         *,
         image_rgb,
+        rasterized_lidar=None,
         speed_mps: float = 0.0,
         target_xy: tuple[float, float] = (15.0, 0.0),
+        target_points_xy=None,
         command: str = "lane_follow",
     ) -> dict[str, Any]:
         torch = self.torch
@@ -350,11 +379,13 @@ class LeadTorchRuntime:
         resized = cv2.resize(image_rgb, (image_w, image_h), interpolation=cv2.INTER_AREA)
         rgb = np.transpose(resized, (2, 0, 1))[None].copy()
 
-        lidar_h = int(self.config.lidar_height_pixel)
-        lidar_w = int(self.config.lidar_width_pixel)
-        rasterized_lidar = np.zeros((1, 1, lidar_h, lidar_w), dtype=np.float32)
+        if rasterized_lidar is None:
+            rasterized_lidar = self.zero_lidar_raster(reason="missing_pointcloud")
         command_one_hot = self._command_one_hot(command)
-        target = np.array([target_xy], dtype=np.float32)
+        previous_xy, current_xy, next_xy = self._target_triplet(target_xy, target_points_xy)
+        target = np.array([current_xy], dtype=np.float32)
+        target_previous = np.array([previous_xy], dtype=np.float32)
+        target_next = np.array([next_xy], dtype=np.float32)
 
         return {
             "rgb": torch.from_numpy(rgb),
@@ -362,8 +393,8 @@ class LeadTorchRuntime:
             "speed": torch.tensor([float(speed_mps)], dtype=torch.float32),
             "command": torch.from_numpy(command_one_hot),
             "target_point": torch.from_numpy(target),
-            "target_point_previous": torch.from_numpy(target),
-            "target_point_next": torch.from_numpy(target),
+            "target_point_previous": torch.from_numpy(target_previous),
+            "target_point_next": torch.from_numpy(target_next),
             "iteration": torch.tensor([0], dtype=torch.long),
         }
 
@@ -371,31 +402,279 @@ class LeadTorchRuntime:
         self,
         *,
         image_msg,
+        pointcloud_msg=None,
         speed_mps: float = 0.0,
         target_xy: tuple[float, float] = (15.0, 0.0),
+        target_points_xy=None,
         command: str = "lane_follow",
     ) -> dict[str, Any]:
         torch = self.torch
         image = self._image_msg_to_torch_rgb_tensor(image_msg)
+        rasterized_lidar = self.rasterized_lidar_from_pointcloud(pointcloud_msg)
 
-        lidar_h = int(self.config.lidar_height_pixel)
-        lidar_w = int(self.config.lidar_width_pixel)
         command_one_hot = torch.zeros((1, 6), dtype=torch.float32, device=self.device)
         command_one_hot[0, self._command_index(command)] = 1.0
-        target = torch.tensor([target_xy], dtype=torch.float32, device=self.device)
+        previous_xy, current_xy, next_xy = self._target_triplet(target_xy, target_points_xy)
+        target = torch.tensor([current_xy], dtype=torch.float32, device=self.device)
+        target_previous = torch.tensor([previous_xy], dtype=torch.float32, device=self.device)
+        target_next = torch.tensor([next_xy], dtype=torch.float32, device=self.device)
 
         return {
             "rgb": image,
-            "rasterized_lidar": torch.zeros(
-                (1, 1, lidar_h, lidar_w), dtype=torch.float32, device=self.device
+            "rasterized_lidar": torch.from_numpy(rasterized_lidar).to(
+                self.device, dtype=torch.float32, non_blocking=True
             ),
             "speed": torch.tensor([float(speed_mps)], dtype=torch.float32, device=self.device),
             "command": command_one_hot,
             "target_point": target,
-            "target_point_previous": target,
-            "target_point_next": target,
+            "target_point_previous": target_previous,
+            "target_point_next": target_next,
             "iteration": torch.tensor([0], dtype=torch.long, device=self.device),
         }
+
+    @staticmethod
+    def _target_triplet(target_xy, target_points_xy) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+        def clean(point, fallback):
+            if point is None:
+                return fallback
+            try:
+                x = float(point[0])
+                y = float(point[1])
+            except Exception:
+                return fallback
+            if not (math.isfinite(x) and math.isfinite(y)):
+                return fallback
+            return (x, y)
+
+        current = clean(target_xy, (15.0, 0.0))
+        previous = current
+        next_point = current
+        if isinstance(target_points_xy, dict):
+            previous = clean(target_points_xy.get("previous"), previous)
+            current = clean(target_points_xy.get("current"), current)
+            next_point = clean(target_points_xy.get("next"), next_point)
+        elif target_points_xy is not None:
+            try:
+                values = list(target_points_xy)
+            except Exception:
+                values = []
+            if len(values) >= 3:
+                previous = clean(values[0], previous)
+                current = clean(values[1], current)
+                next_point = clean(values[2], next_point)
+        return previous, current, next_point
+
+    def zero_lidar_raster(self, *, reason: str) -> Any:
+        np = self.np
+        lidar_h = int(self.config.lidar_height_pixel)
+        lidar_w = int(self.config.lidar_width_pixel)
+        self.last_lidar_raster_status = {
+            "enabled": self.lidar_raster_enabled,
+            "source": "zero",
+            "reason": reason,
+            "input_points": 0,
+            "finite_points": 0,
+            "used_points": 0,
+            "nonzero_pixels": 0,
+            "max_value": 0.0,
+            "frame_id": "",
+            "history_size": 0,
+            "configured_history_size": self.lidar_history_size,
+            "flip_y_axis": self.lidar_flip_y_axis,
+        }
+        return np.zeros((1, 1, lidar_h, lidar_w), dtype=np.float32)
+
+    def rasterized_lidar_from_pointcloud(self, pointcloud_msg) -> Any:
+        if not self.lidar_raster_enabled:
+            return self.zero_lidar_raster(reason="disabled")
+        if pointcloud_msg is None:
+            return self.zero_lidar_raster(reason="missing_pointcloud")
+
+        np = self.np
+        cv2 = self.cv2
+        try:
+            points = self._pointcloud_xyz_array(pointcloud_msg)
+            input_points = int(points.shape[0])
+            points = points[np.isfinite(points).all(axis=1)]
+            finite_points = int(points.shape[0])
+            if finite_points == 0:
+                return self.zero_lidar_raster(reason="empty_after_finite_filter")
+
+            if self.lidar_flip_y_axis:
+                points = points.copy()
+                points[:, 1] = -points[:, 1]
+
+            precision = 0.1
+            points = np.round(points / precision) * precision
+            if self.lidar_max_points > 0 and points.shape[0] > self.lidar_max_points:
+                stride = int(np.ceil(points.shape[0] / float(self.lidar_max_points)))
+                points = points[::stride]
+
+            stamp_key = self._pointcloud_stamp_key(pointcloud_msg)
+            if not self._lidar_history or self._lidar_history[-1][0] != stamp_key:
+                self._lidar_history.append((stamp_key, points))
+                self._lidar_history = self._lidar_history[-self.lidar_history_size :]
+            history_points = (
+                np.concatenate([entry[1] for entry in self._lidar_history], axis=0)
+                if self._lidar_history
+                else points
+            )
+
+            raster = self._rasterize_lidar_points(history_points)
+            compressed_ok = False
+            try:
+                scaled = (np.clip(raster[..., None], 0.0, 1.0) * 65535.0).astype(np.uint16)
+                success, compressed = cv2.imencode(
+                    ".png",
+                    scaled,
+                    [int(cv2.IMWRITE_PNG_COMPRESSION), int(self.config.training_png_compression_level)],
+                )
+                if success:
+                    decoded = cv2.imdecode(compressed, cv2.IMREAD_UNCHANGED).astype(np.float32)
+                    raster = np.squeeze(decoded / 65535.0).astype(np.float32)
+                    compressed_ok = True
+            except Exception:
+                compressed_ok = False
+
+            raster = raster[None, None].astype(np.float32, copy=False)
+            self.last_lidar_raster_status = {
+                "enabled": self.lidar_raster_enabled,
+                "source": "pointcloud",
+                "reason": "",
+                "input_points": input_points,
+                "finite_points": finite_points,
+                "used_points": int(history_points.shape[0]),
+                "nonzero_pixels": int(np.count_nonzero(raster)),
+                "max_value": float(raster.max()) if raster.size else 0.0,
+                "frame_id": str(getattr(getattr(pointcloud_msg, "header", None), "frame_id", "")),
+                "history_size": len(self._lidar_history),
+                "configured_history_size": self.lidar_history_size,
+                "flip_y_axis": self.lidar_flip_y_axis,
+                "compression_roundtrip": compressed_ok,
+            }
+            return raster
+        except Exception as exc:
+            status = {
+                "enabled": self.lidar_raster_enabled,
+                "source": "zero",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "input_points": 0,
+                "finite_points": 0,
+                "used_points": 0,
+                "nonzero_pixels": 0,
+                "max_value": 0.0,
+                "frame_id": str(getattr(getattr(pointcloud_msg, "header", None), "frame_id", "")),
+                "history_size": len(self._lidar_history),
+                "configured_history_size": self.lidar_history_size,
+                "flip_y_axis": self.lidar_flip_y_axis,
+            }
+            raster = self.zero_lidar_raster(reason=status["reason"])
+            self.last_lidar_raster_status.update(status)
+            return raster
+
+    def _rasterize_lidar_points(self, points) -> Any:
+        np = self.np
+        config = self.config
+        lidar_h = int(config.lidar_height_pixel)
+        lidar_w = int(config.lidar_width_pixel)
+        if points.size == 0:
+            return np.zeros((lidar_h, lidar_w), dtype=np.float32)
+
+        mask = (
+            (points[:, 0] >= float(config.min_x_meter))
+            & (points[:, 0] <= float(config.max_x_meter))
+            & (points[:, 1] >= float(config.min_y_meter))
+            & (points[:, 1] <= float(config.max_y_meter))
+            & (points[:, 2] >= float(config.min_height_lidar))
+            & (points[:, 2] <= float(config.max_height_lidar))
+        )
+        points = points[mask]
+        if points.size == 0:
+            return np.zeros((lidar_h, lidar_w), dtype=np.float32)
+
+        xbins = np.linspace(float(config.min_x_meter), float(config.max_x_meter), lidar_w + 1)
+        ybins = np.linspace(float(config.min_y_meter), float(config.max_y_meter), lidar_h + 1)
+        hist = np.histogramdd(points[:, :2], bins=(xbins, ybins))[0]
+        hist = np.minimum(hist, float(config.hist_max_per_pixel)) / float(config.hist_max_per_pixel)
+        return hist.T.astype(np.float32)
+
+    def _pointcloud_stamp_key(self, msg) -> tuple[int, int, str]:
+        header = getattr(msg, "header", None)
+        stamp = getattr(header, "stamp", None)
+        return (
+            int(getattr(stamp, "sec", 0)),
+            int(getattr(stamp, "nanosec", 0)),
+            str(getattr(header, "frame_id", "")),
+        )
+
+    def _pointcloud_xyz_array(self, msg):
+        np = self.np
+        width = int(getattr(msg, "width", 0))
+        height = int(getattr(msg, "height", 1))
+        point_step = int(getattr(msg, "point_step", 0))
+        row_step = int(getattr(msg, "row_step", width * point_step))
+        if width <= 0 or height <= 0 or point_step <= 0:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        dtype = self._pointcloud_dtype(msg)
+        count_per_row = width
+        raw = memoryview(getattr(msg, "data", b""))
+        if row_step == width * point_step:
+            records = np.frombuffer(raw, dtype=dtype, count=width * height)
+        else:
+            rows = []
+            for row in range(height):
+                start = row * row_step
+                stop = start + width * point_step
+                rows.append(np.frombuffer(raw[start:stop], dtype=dtype, count=count_per_row))
+            records = np.concatenate(rows) if rows else np.zeros((0,), dtype=dtype)
+
+        xyz = np.empty((records.shape[0], 3), dtype=np.float32)
+        xyz[:, 0] = records["x"].astype(np.float32, copy=False)
+        xyz[:, 1] = records["y"].astype(np.float32, copy=False)
+        xyz[:, 2] = records["z"].astype(np.float32, copy=False)
+        return xyz
+
+    def _pointcloud_dtype(self, msg):
+        np = self.np
+        endian = ">" if bool(getattr(msg, "is_bigendian", False)) else "<"
+        type_map = {
+            1: "i1",
+            2: "u1",
+            3: "i2",
+            4: "u2",
+            5: "i4",
+            6: "u4",
+            7: "f4",
+            8: "f8",
+        }
+        names = []
+        formats = []
+        offsets = []
+        for field in getattr(msg, "fields", []):
+            datatype = int(getattr(field, "datatype", 0))
+            if datatype not in type_map:
+                continue
+            name = str(getattr(field, "name", ""))
+            count = max(1, int(getattr(field, "count", 1)))
+            base = type_map[datatype]
+            fmt = base if base.endswith("1") else endian + base
+            if count > 1:
+                fmt = (fmt, (count,))
+            names.append(name)
+            formats.append(fmt)
+            offsets.append(int(getattr(field, "offset", 0)))
+        for required in ("x", "y", "z"):
+            if required not in names:
+                raise ValueError(f"PointCloud2 field {required!r} is missing")
+        return np.dtype(
+            {
+                "names": names,
+                "formats": formats,
+                "offsets": offsets,
+                "itemsize": int(getattr(msg, "point_step", 0)),
+            }
+        )
 
     def forward(self, data: dict[str, Any]) -> LeadForwardResult:
         if not self.loaded:

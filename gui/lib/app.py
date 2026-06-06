@@ -66,7 +66,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--ros-route-pointcloud-topic", default="/shadow/route/pointcloud")
     parser.add_argument("--ros-route-pointcloud-max-points", type=int, default=1500)
     parser.add_argument("--ros-route-path-topic", default="/shadow/route/gui_path")
+    parser.add_argument("--ros-route-target-topic", default="/shadow/route/target_point")
+    parser.add_argument("--ros-route-target-path-topic", default="/shadow/route/target_path")
     parser.add_argument("--ros-e2e-path-topic", default="/shadow/e2e/path")
+    parser.add_argument("--ros-e2e-raw-lead-path-topic", default="/shadow/e2e/path_raw_lead")
+    parser.add_argument("--ros-e2e-status-topic", default="/shadow/e2e/status")
+    parser.add_argument("--ros-e2e-model-input-image-topic", default="/shadow/e2e/model_input_image")
+    parser.add_argument("--ros-e2e-pointcloud-topic", default="/cloud_registered_body")
     parser.add_argument("--ros-scan-topic", default="/scan")
     parser.add_argument("--ros-lane-topic", default="/scan")
     parser.add_argument("--ros-objects-topic", default="/detected_objects")
@@ -109,6 +115,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="OSRM/phone route guidance textのIrodori音声案内を無効化します。",
     )
     parser.add_argument("--route-voice-preannounce-distance-m", type=float, default=300.0)
+    parser.add_argument("--route-voice-early-preannounce-distance-m", type=float, default=1000.0)
     parser.add_argument("--gpu-monitor-interval-sec", type=float, default=1.0)
     parser.add_argument("--disable-gpu-monitor", action="store_true")
     parser.add_argument(
@@ -139,10 +146,16 @@ def _rosbag_record_topics(args: argparse.Namespace) -> list[str]:
     return _unique_topics(
         [
             args.ros_pointcloud_topic,
+            args.ros_e2e_pointcloud_topic,
             args.ros_pointcloud_odom_topic,
             args.ros_route_pointcloud_topic,
             args.ros_route_path_topic,
+            args.ros_route_target_topic,
+            args.ros_route_target_path_topic,
             args.ros_e2e_path_topic,
+            args.ros_e2e_raw_lead_path_topic,
+            args.ros_e2e_status_topic,
+            args.ros_e2e_model_input_image_topic,
             args.ros_camera_image_topic,
             args.ros_camera_overlay_topic,
             args.ros_camera_compressed_overlay_topic,
@@ -163,12 +176,20 @@ def _rosbag_record_presets(args: argparse.Namespace) -> dict[str, list[str]]:
     e2e_input_topics = _unique_topics(
         [
             args.ros_pointcloud_topic,
+            args.ros_e2e_pointcloud_topic,
             args.ros_pointcloud_odom_topic,
             args.ros_camera_image_topic,
             args.ros_camera_info_topic,
+            args.ros_e2e_model_input_image_topic,
+            args.ros_e2e_path_topic,
+            args.ros_e2e_raw_lead_path_topic,
+            args.ros_e2e_status_topic,
             args.ros_phone_fix_topic,
             args.ros_phone_goal_topic,
             args.ros_phone_status_topic,
+            args.ros_route_path_topic,
+            args.ros_route_target_topic,
+            args.ros_route_target_path_topic,
             args.ros_gps_topic,
             "/tf",
             "/tf_static",
@@ -192,14 +213,16 @@ def _rosbag_record_presets(args: argparse.Namespace) -> dict[str, list[str]]:
             args.ros_shadow_intervention_score_topic,
             args.ros_shadow_summary_topic,
             args.ros_e2e_path_topic,
-            "/shadow/e2e/status",
+            args.ros_e2e_raw_lead_path_topic,
+            args.ros_e2e_status_topic,
             "/shadow/e2e/steering_proxy",
             "/shadow/e2e/curvature",
             "/shadow/e2e/speed_target",
             "/shadow/e2e/confidence",
             args.ros_route_path_topic,
             args.ros_route_pointcloud_topic,
-            "/shadow/route/target_point",
+            args.ros_route_target_topic,
+            args.ros_route_target_path_topic,
             "/shadow/route/command",
             "/shadow/fused/odometry",
             "/shadow/fused/path",
@@ -299,6 +322,7 @@ def main() -> None:
             route_voice_guidance_enabled=not args.disable_route_voice_guidance,
             tts_backend_url=args.tts_backend_url,
             route_voice_preannounce_distance_m=args.route_voice_preannounce_distance_m,
+            route_voice_early_preannounce_distance_m=args.route_voice_early_preannounce_distance_m,
             gpu_monitor_interval_sec=args.gpu_monitor_interval_sec,
             gpu_monitor_enabled=not args.disable_gpu_monitor,
             rosbag_record_dir=args.rosbag_record_dir or _default_rosbag_record_dir(),

@@ -141,7 +141,7 @@ class PhoneLocationBridge(Node):
         self.osrm_service_url = self.declare_parameter(
             "osrm_service_url", OSRM_SERVICE_URL
         ).value.rstrip("/")
-        self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 5.0).value)
+        self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 10.0).value)
         self.fix_stale_timeout_sec = max(
             0.0, float(self.declare_parameter("fix_stale_timeout_sec", 3.0).value)
         )
@@ -159,7 +159,7 @@ class PhoneLocationBridge(Node):
         self.route_frame_id = self.declare_parameter("route_frame_id", "base_link").value
         self.path_step_m = max(0.5, float(self.declare_parameter("path_step_m", 2.0).value))
         self.max_path_length_m = max(
-            1.0, float(self.declare_parameter("max_path_length_m", 200.0).value)
+            1.0, float(self.declare_parameter("max_path_length_m", 400.0).value)
         )
         self.default_heading_deg = float(
             self.declare_parameter("default_heading_deg", 0.0).value
@@ -908,9 +908,16 @@ class PhoneLocationBridge(Node):
             self.goal_pub.publish(String(data=json.dumps(route_meta, sort_keys=True)))
         if fresh_current is not None and goal is not None:
             path = self._build_path(fresh_current, goal, now, route_meta, selected_route)
+            route_meta["published_path"] = bool(path.poses)
+            route_meta["published_path_poses"] = len(path.poses)
+            route_meta["published_path_length_m"] = self._path_length_m(path)
             if path.poses:
                 self.path_pub.publish(path)
                 self.command_pub.publish(String(data=str(self.route_command)))
+        else:
+            route_meta["published_path"] = False
+            route_meta["published_path_poses"] = 0
+            route_meta["published_path_length_m"] = 0.0
 
         snapshot["route"] = route_meta
         self.status_pub.publish(String(data=json.dumps(snapshot, sort_keys=True)))
@@ -1012,6 +1019,8 @@ class PhoneLocationBridge(Node):
                 "target_x_m": x_m,
                 "target_y_m": y_m,
                 "path_source": "osrm" if selected_route else "straight",
+                "path_step_m": self.path_step_m,
+                "max_path_length_m": self.max_path_length_m,
             }
         )
         if selected_route:
@@ -1034,8 +1043,10 @@ class PhoneLocationBridge(Node):
         path.header.frame_id = self.route_frame_id
         if selected_route:
             route_path = self._build_route_geometry_path(current, stamp, meta, selected_route)
-            if route_path.poses:
+            if self._path_length_m(route_path) >= 0.5:
+                meta["path_source"] = "osrm"
                 return route_path
+            meta["path_source"] = "straight_osrm_short"
 
         x_m = float(meta.get("target_x_m", 0.0))
         y_m = float(meta.get("target_y_m", 0.0))
@@ -1055,6 +1066,21 @@ class PhoneLocationBridge(Node):
             pose.pose.orientation.w = 1.0
             path.poses.append(pose)
         return path
+
+    @staticmethod
+    def _path_length_m(path: Path) -> float:
+        total_length = 0.0
+        previous_xy: Optional[tuple[float, float]] = None
+        for pose in path.poses:
+            point = pose.pose.position
+            current_xy = (float(point.x), float(point.y))
+            if previous_xy is not None:
+                total_length += math.hypot(
+                    current_xy[0] - previous_xy[0],
+                    current_xy[1] - previous_xy[1],
+                )
+            previous_xy = current_xy
+        return total_length
 
     def _build_route_geometry_path(
         self,

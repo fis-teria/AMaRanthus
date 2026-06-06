@@ -28,6 +28,10 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("path_topic", default_value="/shadow/e2e/path"),
             DeclareLaunchArgument(
+                "lane_path_topic",
+                default_value="/shadow/perception/lane_path",
+            ),
+            DeclareLaunchArgument(
                 "yolo_detections_topic",
                 default_value="/yolo/detections",
             ),
@@ -72,10 +76,25 @@ def generate_launch_description():
             DeclareLaunchArgument("stale_image_timeout_sec", default_value="0.5"),
             DeclareLaunchArgument("model_input_width_px", default_value="1152"),
             DeclareLaunchArgument("model_input_height_px", default_value="384"),
+            DeclareLaunchArgument(
+                "model_input_layout",
+                default_value="front_center_stitched",
+            ),
+            DeclareLaunchArgument("model_input_camera_count", default_value="3"),
+            DeclareLaunchArgument("model_input_front_camera_slot", default_value="1"),
+            DeclareLaunchArgument("model_input_crop_to_slot_aspect", default_value="true"),
+            DeclareLaunchArgument("draw_lane_path", default_value="true"),
+            DeclareLaunchArgument("lane_path_line_width_px", default_value="4"),
+            DeclareLaunchArgument("lane_path_outline_width_px", default_value="2"),
+            DeclareLaunchArgument("lane_path_ribbon_width_m", default_value="0.0"),
+            DeclareLaunchArgument("stale_lane_path_timeout_sec", default_value="1.0"),
             DeclareLaunchArgument("yolo_input_width_px", default_value="960"),
             DeclareLaunchArgument("yolo_input_height_px", default_value="640"),
             DeclareLaunchArgument("lane_input_width_px", default_value="640"),
             DeclareLaunchArgument("lane_input_height_px", default_value="427"),
+            DeclareLaunchArgument("synthesize_camera_info_when_missing", default_value="false"),
+            DeclareLaunchArgument("synthetic_camera_info_focal_length_px", default_value="0.0"),
+            DeclareLaunchArgument("synthetic_camera_info_frame_id", default_value=""),
             Node(
                 package="e2e_path_overlay",
                 executable=LaunchConfiguration("executable"),
@@ -87,6 +106,7 @@ def generate_launch_description():
                         "image_topic": LaunchConfiguration("image_topic"),
                         "camera_info_topic": LaunchConfiguration("camera_info_topic"),
                         "path_topic": LaunchConfiguration("path_topic"),
+                        "lane_path_topic": LaunchConfiguration("lane_path_topic"),
                         "yolo_detections_topic": LaunchConfiguration(
                             "yolo_detections_topic"
                         ),
@@ -129,6 +149,36 @@ def generate_launch_description():
                         "model_input_height_px": ParameterValue(
                             LaunchConfiguration("model_input_height_px"), value_type=int
                         ),
+                        "model_input_layout": LaunchConfiguration("model_input_layout"),
+                        "model_input_camera_count": ParameterValue(
+                            LaunchConfiguration("model_input_camera_count"), value_type=int
+                        ),
+                        "model_input_front_camera_slot": ParameterValue(
+                            LaunchConfiguration("model_input_front_camera_slot"),
+                            value_type=int,
+                        ),
+                        "model_input_crop_to_slot_aspect": ParameterValue(
+                            LaunchConfiguration("model_input_crop_to_slot_aspect"),
+                            value_type=bool,
+                        ),
+                        "draw_lane_path": ParameterValue(
+                            LaunchConfiguration("draw_lane_path"), value_type=bool
+                        ),
+                        "lane_path_line_width_px": ParameterValue(
+                            LaunchConfiguration("lane_path_line_width_px"), value_type=int
+                        ),
+                        "lane_path_outline_width_px": ParameterValue(
+                            LaunchConfiguration("lane_path_outline_width_px"),
+                            value_type=int,
+                        ),
+                        "lane_path_ribbon_width_m": ParameterValue(
+                            LaunchConfiguration("lane_path_ribbon_width_m"),
+                            value_type=float,
+                        ),
+                        "stale_lane_path_timeout_sec": ParameterValue(
+                            LaunchConfiguration("stale_lane_path_timeout_sec"),
+                            value_type=float,
+                        ),
                         "yolo_input_width_px": ParameterValue(
                             LaunchConfiguration("yolo_input_width_px"), value_type=int
                         ),
@@ -140,6 +190,17 @@ def generate_launch_description():
                         ),
                         "lane_input_height_px": ParameterValue(
                             LaunchConfiguration("lane_input_height_px"), value_type=int
+                        ),
+                        "synthesize_camera_info_when_missing": ParameterValue(
+                            LaunchConfiguration("synthesize_camera_info_when_missing"),
+                            value_type=bool,
+                        ),
+                        "synthetic_camera_info_focal_length_px": ParameterValue(
+                            LaunchConfiguration("synthetic_camera_info_focal_length_px"),
+                            value_type=float,
+                        ),
+                        "synthetic_camera_info_frame_id": LaunchConfiguration(
+                            "synthetic_camera_info_frame_id"
                         ),
                     },
                 ],

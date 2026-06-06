@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         route_voice_guidance_enabled: bool = True,
         tts_backend_url: str = "http://127.0.0.1:8766",
         route_voice_preannounce_distance_m: float = 300.0,
+        route_voice_early_preannounce_distance_m: float = 1000.0,
         gpu_monitor_interval_sec: float = 1.0,
         gpu_monitor_enabled: bool = True,
         rosbag_record_dir: str | None = None,
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
             enabled=route_voice_guidance_enabled,
             backend_url=tts_backend_url,
             preannounce_distance_m=route_voice_preannounce_distance_m,
+            early_preannounce_distance_m=route_voice_early_preannounce_distance_m,
             parent=self,
         )
         self._auto_activate_ros2_fields = initial_data_source == "ros2"

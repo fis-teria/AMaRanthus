@@ -11,7 +11,11 @@ import sys
 import time
 
 
-DEFAULT_BAG_RECORD_REGEX = "(/shadow/.*|/livox/lane_detection/.*|/Odometry|/path|/scan)"
+DEFAULT_BAG_RECORD_REGEX = (
+    "(/shadow/.*|/livox/lane_detection/.*|/yolo/.*|/Odometry|/path|/scan|"
+    "/cloud_registered|/cloud_registered_body|/tf|/tf_static|"
+    "/sensing/camera/.*|/phone/.*|/vehicle/gps_status)"
+)
 
 
 def positive_float(value):

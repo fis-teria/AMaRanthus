@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from dataclasses import dataclass, field
 import json
 import math
 import os
@@ -14,6 +15,20 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
+
+
+@dataclass
+class LaneFitDebug:
+    confidence: float = 0.0
+    left_band_count: int = 0
+    right_band_count: int = 0
+    both_band_count: int = 0
+    mask_pixels: int = 0
+    observed_lane_width_m: Optional[float] = None
+    smoothed: bool = False
+    reason: str = ""
+    left_pixels: list[tuple[int, int]] = field(default_factory=list)
+    right_pixels: list[tuple[int, int]] = field(default_factory=list)
 
 
 class CameraLaneDetectionNode(Node):
@@ -34,6 +49,12 @@ class CameraLaneDetectionNode(Node):
         ).value
         self.status_topic = self.declare_parameter(
             "status_topic", "/shadow/perception/lane_status"
+        ).value
+        self.debug_mask_topic = self.declare_parameter(
+            "debug_mask_topic", "/shadow/perception/lane_mask"
+        ).value
+        self.debug_image_topic = self.declare_parameter(
+            "debug_image_topic", "/shadow/perception/lane_debug_image"
         ).value
         self.output_frame = self.declare_parameter("output_frame", "base_link").value
         self.max_process_rate_hz = float(
@@ -72,6 +93,52 @@ class CameraLaneDetectionNode(Node):
         self.publish_status_every_frame = bool(
             self.declare_parameter("publish_status_every_frame", True).value
         )
+        self.publish_debug_images = bool(
+            self.declare_parameter("publish_debug_images", False).value
+        )
+        self.white_hsv_low = self._int_array_param("white_hsv_low", [0, 0, 185])
+        self.white_hsv_high = self._int_array_param("white_hsv_high", [180, 70, 255])
+        self.yellow_hsv_low = self._int_array_param("yellow_hsv_low", [15, 45, 90])
+        self.yellow_hsv_high = self._int_array_param("yellow_hsv_high", [40, 255, 255])
+        self.roi_left_bottom_ratio = float(
+            self.declare_parameter("roi_left_bottom_ratio", 0.08).value
+        )
+        self.roi_left_top_ratio = float(
+            self.declare_parameter("roi_left_top_ratio", 0.40).value
+        )
+        self.roi_right_top_ratio = float(
+            self.declare_parameter("roi_right_top_ratio", 0.60).value
+        )
+        self.roi_right_bottom_ratio = float(
+            self.declare_parameter("roi_right_bottom_ratio", 0.92).value
+        )
+        self.morph_kernel_size = max(
+            1, int(self.declare_parameter("morph_kernel_size", 5).value)
+        )
+        if self.morph_kernel_size % 2 == 0:
+            self.morph_kernel_size += 1
+        self.min_fit_points_per_side = max(
+            2, int(self.declare_parameter("min_fit_points_per_side", 3).value)
+        )
+        self.min_lane_confidence = max(
+            0.0, min(1.0, float(self.declare_parameter("min_lane_confidence", 0.25).value))
+        )
+        self.smoothing_alpha = max(
+            0.0, min(1.0, float(self.declare_parameter("smoothing_alpha", 0.35).value))
+        )
+        self.max_smoothing_jump_m = max(
+            0.1, float(self.declare_parameter("max_smoothing_jump_m", 1.5).value)
+        )
+        self.min_lane_width_m = max(
+            0.1, float(self.declare_parameter("min_lane_width_m", 2.2).value)
+        )
+        self.max_lane_width_m = max(
+            self.min_lane_width_m,
+            float(self.declare_parameter("max_lane_width_m", 4.8).value),
+        )
+        self.max_abs_lateral_m = max(
+            0.1, float(self.declare_parameter("max_abs_lateral_m", 5.0).value)
+        )
 
         self.net = None
         self.model_error = ""
@@ -79,6 +146,8 @@ class CameraLaneDetectionNode(Node):
         self.latest_camera_info: Optional[CameraInfo] = None
         self.forward_count = 0
         self.last_latency_ms = 0.0
+        self.last_lane_confidence = 0.0
+        self.smoothed_laterals: Optional[np.ndarray] = None
         self.image_sub = None
         self.camera_info_sub = None
         self.status_timer = None
@@ -93,6 +162,16 @@ class CameraLaneDetectionNode(Node):
         )
         self.path_pub = self.create_publisher(Path, self.output_path_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
+        self.debug_mask_pub = (
+            self.create_publisher(Image, self.debug_mask_topic, 10)
+            if self.publish_debug_images
+            else None
+        )
+        self.debug_image_pub = (
+            self.create_publisher(Image, self.debug_image_topic, 10)
+            if self.publish_debug_images
+            else None
+        )
 
         if self.enabled and (self.net is not None or self.backend == "opencv_classical"):
             self.image_sub = self.create_subscription(
@@ -127,6 +206,16 @@ class CameraLaneDetectionNode(Node):
     def _int_vector_param(self, name: str, fallback: list[int]) -> set[int]:
         value = self.declare_parameter(name, fallback).value
         return {int(item) for item in value}
+
+    def _int_array_param(self, name: str, fallback: list[int]) -> np.ndarray:
+        value = self.declare_parameter(name, fallback).value
+        try:
+            items = list(value)
+        except TypeError:
+            items = fallback
+        if len(items) != len(fallback):
+            items = fallback
+        return np.asarray([max(0, min(255, int(item))) for item in items], dtype=np.uint8)
 
     def _load_model(self) -> None:
         if not self.enabled:
@@ -172,7 +261,7 @@ class CameraLaneDetectionNode(Node):
         try:
             rgb = self._image_to_rgb(msg)
             mask = self._run_segmentation(rgb)
-            path = self._mask_to_path(mask, msg)
+            path, debug = self._mask_to_path(mask, msg)
         except Exception as exc:
             self.model_error = f"{type(exc).__name__}:{exc}"
             self._publish_status(msg, published=False, reason=self.model_error)
@@ -180,29 +269,54 @@ class CameraLaneDetectionNode(Node):
 
         self.last_latency_ms = (time.monotonic() - start) * 1000.0
         self.forward_count += 1
-        if path.poses:
+        self.last_lane_confidence = debug.confidence
+        if self.publish_debug_images:
+            self._publish_debug_images(msg, rgb, mask, path, debug)
+        if path.poses and debug.confidence >= self.min_lane_confidence:
             self.path_pub.publish(path)
-            self._publish_status(msg, published=True, reason="", path=path)
+            self._publish_status(msg, published=True, reason="", path=path, debug=debug)
         else:
-            self._publish_status(msg, published=False, reason="empty_lane_mask")
+            reason = debug.reason or "empty_lane_mask"
+            if path.poses and debug.confidence < self.min_lane_confidence:
+                reason = "low_lane_confidence"
+            self._publish_status(msg, published=False, reason=reason, path=path, debug=debug)
 
     def _image_to_rgb(self, msg: Image) -> np.ndarray:
         height = int(msg.height)
         width = int(msg.width)
         encoding = msg.encoding.lower()
-        data = np.frombuffer(msg.data, dtype=np.uint8)
         if encoding == "rgb8":
-            return data.reshape((height, width, 3)).copy()
+            rows = self._image_rows(msg, width * 3)
+            return rows[:, : width * 3].reshape((height, width, 3)).copy()
         if encoding == "bgr8":
-            bgr = data.reshape((height, width, 3))
+            rows = self._image_rows(msg, width * 3)
+            bgr = rows[:, : width * 3].reshape((height, width, 3))
             return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         if encoding == "mono8":
-            mono = data.reshape((height, width))
+            rows = self._image_rows(msg, width)
+            mono = rows[:, :width].reshape((height, width))
             return cv2.cvtColor(mono, cv2.COLOR_GRAY2RGB)
         if encoding in ("yuv422", "uyvy", "uyvy422"):
-            uyvy = data.reshape((height, width, 2))
+            rows = self._image_rows(msg, width * 2)
+            uyvy = rows[:, : width * 2].reshape((height, width, 2))
             return cv2.cvtColor(uyvy, cv2.COLOR_YUV2RGB_UYVY)
         raise ValueError(f"unsupported image encoding: {msg.encoding}")
+
+    def _image_rows(self, msg: Image, min_step: int) -> np.ndarray:
+        height = int(msg.height)
+        step = int(msg.step) if int(msg.step) > 0 else min_step
+        data = np.frombuffer(msg.data, dtype=np.uint8)
+        if step < min_step and data.size == height * min_step:
+            step = min_step
+        if step < min_step:
+            raise ValueError(f"invalid image step: {step} < {min_step}")
+        required = height * step
+        if data.size < required and data.size == height * min_step:
+            step = min_step
+            required = height * step
+        if data.size < required:
+            raise ValueError(f"image data too short: {data.size} < {required}")
+        return data[:required].reshape((height, step))
 
     def _run_segmentation(self, rgb: np.ndarray) -> np.ndarray:
         if self.backend == "opencv_classical":
@@ -237,20 +351,24 @@ class CameraLaneDetectionNode(Node):
         height, width = rgb.shape[:2]
         hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
 
-        white_mask = cv2.inRange(hsv, np.array([0, 0, 185]), np.array([180, 70, 255]))
-        yellow_mask = cv2.inRange(hsv, np.array([15, 45, 90]), np.array([40, 255, 255]))
+        white_mask = cv2.inRange(hsv, self.white_hsv_low, self.white_hsv_high)
+        yellow_mask = cv2.inRange(hsv, self.yellow_hsv_low, self.yellow_hsv_high)
         mask = cv2.bitwise_or(white_mask, yellow_mask)
 
         roi = np.zeros((height, width), dtype=np.uint8)
         roi_top = int(np.clip(self.roi_top_ratio, 0.0, 1.0) * height)
         roi_bottom = int(np.clip(self.roi_bottom_ratio, 0.0, 1.0) * height)
+        left_bottom = int(np.clip(self.roi_left_bottom_ratio, 0.0, 1.0) * width)
+        left_top = int(np.clip(self.roi_left_top_ratio, 0.0, 1.0) * width)
+        right_top = int(np.clip(self.roi_right_top_ratio, 0.0, 1.0) * width)
+        right_bottom = int(np.clip(self.roi_right_bottom_ratio, 0.0, 1.0) * width)
         polygon = np.array(
             [
                 [
-                    (int(width * 0.08), roi_bottom),
-                    (int(width * 0.40), roi_top),
-                    (int(width * 0.60), roi_top),
-                    (int(width * 0.92), roi_bottom),
+                    (left_bottom, roi_bottom),
+                    (left_top, roi_top),
+                    (right_top, roi_top),
+                    (right_bottom, roi_bottom),
                 ]
             ],
             dtype=np.int32,
@@ -258,12 +376,14 @@ class CameraLaneDetectionNode(Node):
         cv2.fillPoly(roi, polygon, 255)
         mask = cv2.bitwise_and(mask, roi)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (self.morph_kernel_size, self.morph_kernel_size)
+        )
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return (mask > 0).astype(np.uint8)
 
-    def _mask_to_path(self, mask: np.ndarray, image_msg: Image) -> Path:
+    def _mask_to_path(self, mask: np.ndarray, image_msg: Image) -> tuple[Path, LaneFitDebug]:
         height, width = mask.shape[:2]
         roi_top = int(np.clip(self.roi_top_ratio, 0.0, 1.0) * height)
         roi_bottom = int(np.clip(self.roi_bottom_ratio, 0.0, 1.0) * height)
@@ -274,9 +394,13 @@ class CameraLaneDetectionNode(Node):
         path = Path()
         path.header.stamp = image_msg.header.stamp
         path.header.frame_id = self.output_frame or image_msg.header.frame_id or "base_link"
+        debug = LaneFitDebug(mask_pixels=int(np.count_nonzero(mask)))
 
         ys = np.linspace(roi_bottom - 1, roi_top, max(2, self.path_points)).astype(np.int32)
         image_center = 0.5 * float(width)
+        left_points: list[tuple[float, float]] = []
+        right_points: list[tuple[float, float]] = []
+        lane_widths_m: list[float] = []
         for y in ys:
             band_half = max(2, height // 120)
             y0 = max(0, y - band_half)
@@ -287,19 +411,52 @@ class CameraLaneDetectionNode(Node):
 
             left = xs[xs < image_center]
             right = xs[xs >= image_center]
-            if left.size and right.size:
-                left_edge = float(np.percentile(left, 85))
-                right_edge = float(np.percentile(right, 15))
-                center_u = 0.5 * (left_edge + right_edge)
-                lane_width_px = max(1.0, right_edge - left_edge)
-                meters_per_px = self.assumed_lane_width_m / lane_width_px
-            else:
-                center_u = float(np.median(xs))
-                forward = self._row_to_forward_m(y, roi_top, roi_bottom)
-                meters_per_px = self._meters_per_pixel(width, forward)
-
             forward = self._row_to_forward_m(y, roi_top, roi_bottom)
-            lateral = (center_u - image_center) * meters_per_px
+            meters_per_px = self._meters_per_pixel(width, forward)
+            if left.size and right.size:
+                debug.both_band_count += 1
+            if left.size:
+                left_edge = float(np.percentile(left, 85))
+                lateral = (left_edge - image_center) * meters_per_px
+                left_points.append((forward, lateral))
+                debug.left_band_count += 1
+                debug.left_pixels.append((int(round(left_edge)), int(y)))
+            if right.size:
+                right_edge = float(np.percentile(right, 15))
+                lateral = (right_edge - image_center) * meters_per_px
+                right_points.append((forward, lateral))
+                debug.right_band_count += 1
+                debug.right_pixels.append((int(round(right_edge)), int(y)))
+            if left.size and right.size:
+                lane_widths_m.append(max(0.0, (right_edge - left_edge) * meters_per_px))
+
+        if lane_widths_m:
+            debug.observed_lane_width_m = float(np.median(lane_widths_m))
+
+        center_laterals = self._fit_center_laterals(left_points, right_points, debug)
+        if center_laterals is None:
+            self.smoothed_laterals = None
+            return path, debug
+
+        forward_samples = np.linspace(
+            self.path_forward_min_m,
+            self.path_forward_max_m,
+            max(2, self.path_points),
+            dtype=np.float32,
+        )
+        center_laterals = np.clip(
+            center_laterals,
+            -self.max_abs_lateral_m,
+            self.max_abs_lateral_m,
+        )
+        if debug.confidence >= self.min_lane_confidence:
+            center_laterals, debug.smoothed = self._smooth_laterals(
+                center_laterals, debug.confidence
+            )
+        else:
+            self.smoothed_laterals = None
+
+        for forward, lateral in zip(forward_samples, center_laterals):
             pose = PoseStamped()
             pose.header = path.header
             pose.pose.position.x = float(forward)
@@ -309,7 +466,92 @@ class CameraLaneDetectionNode(Node):
             path.poses.append(pose)
 
         path.poses.sort(key=lambda pose: pose.pose.position.x)
-        return path
+        return path, debug
+
+    def _fit_center_laterals(
+        self,
+        left_points: list[tuple[float, float]],
+        right_points: list[tuple[float, float]],
+        debug: LaneFitDebug,
+    ) -> Optional[np.ndarray]:
+        forward_samples = np.linspace(
+            self.path_forward_min_m,
+            self.path_forward_max_m,
+            max(2, self.path_points),
+            dtype=np.float32,
+        )
+        left_fit = self._fit_side_lateral(left_points)
+        right_fit = self._fit_side_lateral(right_points)
+        if left_fit is None and right_fit is None:
+            debug.reason = "insufficient_line_points"
+            return None
+
+        if left_fit is not None:
+            left_lateral = np.polyval(left_fit, forward_samples)
+        else:
+            left_lateral = None
+        if right_fit is not None:
+            right_lateral = np.polyval(right_fit, forward_samples)
+        else:
+            right_lateral = None
+
+        if left_lateral is not None and right_lateral is not None:
+            center_lateral = 0.5 * (left_lateral + right_lateral)
+            side_score = 1.0
+        elif left_lateral is not None:
+            center_lateral = left_lateral + 0.5 * self.assumed_lane_width_m
+            side_score = 0.65
+        else:
+            center_lateral = right_lateral - 0.5 * self.assumed_lane_width_m
+            side_score = 0.65
+
+        total_bands = max(1, len(left_points) + len(right_points))
+        coverage_score = min(1.0, total_bands / max(1.0, 2.0 * float(self.path_points)))
+        width_score = 1.0
+        if debug.observed_lane_width_m is not None:
+            if debug.observed_lane_width_m < self.min_lane_width_m:
+                width_score = max(
+                    0.25,
+                    debug.observed_lane_width_m / max(self.min_lane_width_m, 1.0e-6),
+                )
+            elif debug.observed_lane_width_m > self.max_lane_width_m:
+                width_score = max(
+                    0.25,
+                    self.max_lane_width_m / max(debug.observed_lane_width_m, 1.0e-6),
+                )
+        debug.confidence = max(0.0, min(1.0, coverage_score * side_score * width_score))
+        if debug.confidence < self.min_lane_confidence:
+            debug.reason = "low_lane_confidence"
+        return center_lateral.astype(np.float32)
+
+    def _fit_side_lateral(self, points: list[tuple[float, float]]) -> Optional[np.ndarray]:
+        if len(points) < self.min_fit_points_per_side:
+            return None
+        xs = np.asarray([point[0] for point in points], dtype=np.float32)
+        ys = np.asarray([point[1] for point in points], dtype=np.float32)
+        degree = min(2, len(points) - 1)
+        try:
+            return np.polyfit(xs, ys, degree)
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            return None
+
+    def _smooth_laterals(
+        self, lateral: np.ndarray, confidence: float
+    ) -> tuple[np.ndarray, bool]:
+        if self.smoothing_alpha <= 0.0:
+            self.smoothed_laterals = lateral
+            return lateral, False
+        if self.smoothed_laterals is None or self.smoothed_laterals.shape != lateral.shape:
+            self.smoothed_laterals = lateral
+            return lateral, False
+        jump_m = float(np.max(np.abs(lateral - self.smoothed_laterals)))
+        if jump_m > self.max_smoothing_jump_m:
+            self.smoothed_laterals = lateral
+            return lateral, False
+        alpha = max(0.05, min(1.0, self.smoothing_alpha * (0.5 + 0.5 * confidence)))
+        smoothed = alpha * lateral + (1.0 - alpha) * self.smoothed_laterals
+        self.smoothed_laterals = smoothed.astype(np.float32)
+        return self.smoothed_laterals, True
 
     def _row_to_forward_m(self, y: int, roi_top: int, roi_bottom: int) -> float:
         denom = max(1.0, float(roi_bottom - roi_top))
@@ -325,6 +567,94 @@ class CameraLaneDetectionNode(Node):
         half_fov = math.radians(self.fallback_horizontal_fov_deg) * 0.5
         return max(0.001, (forward_m * math.tan(half_fov)) / max(1.0, width * 0.5))
 
+    def _forward_to_row(self, forward_m: float, roi_top: int, roi_bottom: int) -> int:
+        span = max(1.0, self.path_forward_max_m - self.path_forward_min_m)
+        ratio = np.clip((forward_m - self.path_forward_min_m) / span, 0.0, 1.0)
+        return int(round(float(roi_bottom) - ratio * float(roi_bottom - roi_top)))
+
+    def _publish_debug_images(
+        self,
+        image_msg: Image,
+        rgb: np.ndarray,
+        mask: np.ndarray,
+        path: Path,
+        debug: LaneFitDebug,
+    ) -> None:
+        if self.debug_mask_pub is not None:
+            mask_msg = Image()
+            mask_msg.header = image_msg.header
+            mask_msg.height = int(mask.shape[0])
+            mask_msg.width = int(mask.shape[1])
+            mask_msg.encoding = "mono8"
+            mask_msg.is_bigendian = 0
+            mask_msg.step = int(mask_msg.width)
+            mask_msg.data = (mask.astype(np.uint8) * 255).tobytes()
+            self.debug_mask_pub.publish(mask_msg)
+
+        if self.debug_image_pub is None:
+            return
+        overlay = rgb.copy()
+        mask_pixels = mask > 0
+        if np.any(mask_pixels):
+            lane_color = np.asarray([255, 220, 40], dtype=np.uint8)
+            overlay[mask_pixels] = (
+                0.45 * overlay[mask_pixels].astype(np.float32)
+                + 0.55 * lane_color.astype(np.float32)
+            ).astype(np.uint8)
+
+        height, width = mask.shape[:2]
+        roi_top = int(np.clip(self.roi_top_ratio, 0.0, 1.0) * height)
+        roi_bottom = int(np.clip(self.roi_bottom_ratio, 0.0, 1.0) * height)
+        image_center = 0.5 * float(width)
+        left_bottom = int(np.clip(self.roi_left_bottom_ratio, 0.0, 1.0) * width)
+        left_top = int(np.clip(self.roi_left_top_ratio, 0.0, 1.0) * width)
+        right_top = int(np.clip(self.roi_right_top_ratio, 0.0, 1.0) * width)
+        right_bottom = int(np.clip(self.roi_right_bottom_ratio, 0.0, 1.0) * width)
+        roi_poly = np.array(
+            [[(left_bottom, roi_bottom), (left_top, roi_top), (right_top, roi_top), (right_bottom, roi_bottom)]],
+            dtype=np.int32,
+        )
+        cv2.polylines(overlay, roi_poly, True, (90, 170, 255), 2)
+        for point in debug.left_pixels:
+            cv2.circle(overlay, point, 4, (80, 220, 255), -1)
+        for point in debug.right_pixels:
+            cv2.circle(overlay, point, 4, (255, 140, 90), -1)
+
+        path_pixels = []
+        for pose in path.poses:
+            forward = float(pose.pose.position.x)
+            lateral = float(pose.pose.position.y)
+            row = self._forward_to_row(forward, roi_top, roi_bottom)
+            meters_per_px = self._meters_per_pixel(width, forward)
+            col = int(round(image_center + lateral / max(meters_per_px, 1.0e-6)))
+            if 0 <= row < height and 0 <= col < width:
+                path_pixels.append((col, row))
+        if len(path_pixels) >= 2:
+            cv2.polylines(overlay, [np.asarray(path_pixels, dtype=np.int32)], False, (40, 255, 120), 3)
+        for point in path_pixels:
+            cv2.circle(overlay, point, 3, (210, 255, 220), -1)
+
+        text = f"lane conf={debug.confidence:.2f} L={debug.left_band_count} R={debug.right_band_count}"
+        cv2.putText(
+            overlay,
+            text,
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        overlay_msg = Image()
+        overlay_msg.header = image_msg.header
+        overlay_msg.height = int(overlay.shape[0])
+        overlay_msg.width = int(overlay.shape[1])
+        overlay_msg.encoding = "rgb8"
+        overlay_msg.is_bigendian = 0
+        overlay_msg.step = int(overlay_msg.width) * 3
+        overlay_msg.data = overlay.tobytes()
+        self.debug_image_pub.publish(overlay_msg)
+
     def _publish_status(
         self,
         image_msg: Optional[Image],
@@ -332,6 +662,7 @@ class CameraLaneDetectionNode(Node):
         published: bool,
         reason: str,
         path: Optional[Path] = None,
+        debug: Optional[LaneFitDebug] = None,
     ) -> None:
         stamp = self.get_clock().now().nanoseconds * 1.0e-9
         image_encoding = ""
@@ -355,6 +686,17 @@ class CameraLaneDetectionNode(Node):
             "published": published,
             "reason": reason,
             "path_points": 0 if path is None else len(path.poses),
+            "confidence": self.last_lane_confidence if debug is None else debug.confidence,
+            "min_lane_confidence": self.min_lane_confidence,
+            "left_band_count": 0 if debug is None else debug.left_band_count,
+            "right_band_count": 0 if debug is None else debug.right_band_count,
+            "both_band_count": 0 if debug is None else debug.both_band_count,
+            "mask_pixels": 0 if debug is None else debug.mask_pixels,
+            "observed_lane_width_m": None if debug is None else debug.observed_lane_width_m,
+            "smoothed": False if debug is None else debug.smoothed,
+            "publish_debug_images": self.publish_debug_images,
+            "debug_mask_topic": self.debug_mask_topic if self.publish_debug_images else "",
+            "debug_image_topic": self.debug_image_topic if self.publish_debug_images else "",
             "stamp": stamp,
         }
         self.status_pub.publish(String(data=json.dumps(payload, sort_keys=True)))

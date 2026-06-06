@@ -162,6 +162,10 @@ def generate_launch_description():
                 "tls_cert_file": LaunchConfiguration("phone_bridge_tls_cert_file"),
                 "tls_key_file": LaunchConfiguration("phone_bridge_tls_key_file"),
                 "osrm_service_url": LaunchConfiguration("phone_bridge_osrm_service_url"),
+                "publish_rate_hz": ParameterValue(
+                    LaunchConfiguration("phone_bridge_publish_rate_hz"),
+                    value_type=float,
+                ),
                 "fix_stale_timeout_sec": ParameterValue(
                     LaunchConfiguration("phone_bridge_fix_stale_timeout_sec"),
                     value_type=float,
@@ -172,6 +176,14 @@ def generate_launch_description():
                 "gps_status_topic": LaunchConfiguration("phone_bridge_gps_status_topic"),
                 "status_topic": LaunchConfiguration("phone_bridge_status_topic"),
                 "route_frame_id": LaunchConfiguration("route_target_default_frame_id"),
+                "path_step_m": ParameterValue(
+                    LaunchConfiguration("phone_bridge_path_step_m"),
+                    value_type=float,
+                ),
+                "max_path_length_m": ParameterValue(
+                    LaunchConfiguration("phone_bridge_max_path_length_m"),
+                    value_type=float,
+                ),
                 "route_command_topic": LaunchConfiguration("route_command_topic"),
                 "route_command": LaunchConfiguration("phone_bridge_route_command"),
                 "auto_reroute_enabled": ParameterValue(
@@ -305,6 +317,7 @@ def generate_launch_description():
             route_target_param_file,
             {
                 "output_topic": LaunchConfiguration("route_target_output_topic"),
+                "output_path_topic": LaunchConfiguration("route_target_output_path_topic"),
                 "status_topic": LaunchConfiguration("route_target_status_topic"),
                 "route_command_topic": LaunchConfiguration("route_command_topic"),
                 "publish_rate_hz": ParameterValue(
@@ -316,9 +329,21 @@ def generate_launch_description():
                 "lookahead_distance_m": ParameterValue(
                     LaunchConfiguration("route_target_lookahead_distance_m"), value_type=float
                 ),
+                "speed_adaptive_lookahead": ParameterValue(
+                    LaunchConfiguration("route_target_speed_adaptive_lookahead"),
+                    value_type=bool,
+                ),
+                "lookahead_time_sec": ParameterValue(
+                    LaunchConfiguration("route_target_lookahead_time_sec"), value_type=float
+                ),
+                "max_lookahead_distance_m": ParameterValue(
+                    LaunchConfiguration("route_target_max_lookahead_distance_m"),
+                    value_type=float,
+                ),
                 "min_forward_distance_m": ParameterValue(
                     LaunchConfiguration("route_target_min_forward_distance_m"), value_type=float
                 ),
+                "odom_topic": LaunchConfiguration("odom_topic"),
                 "source_priority": LaunchConfiguration("route_target_source_priority"),
                 "gui_route_path_topic": LaunchConfiguration("gui_route_path_topic"),
                 "image_lane_path_topic": LaunchConfiguration("image_lane_path_topic"),
@@ -599,6 +624,11 @@ def generate_launch_description():
                 description="E2E TransFuser に渡す route target topic。",
             ),
             DeclareLaunchArgument(
+                "route_target_output_path_topic",
+                default_value="/shadow/route/target_path",
+                description="E2E TransFuser の previous/current/next target 用 Path topic。",
+            ),
+            DeclareLaunchArgument(
                 "route_target_status_topic",
                 default_value="/shadow/route/target_status",
                 description="route target 選択状態の JSON status topic。",
@@ -622,6 +652,21 @@ def generate_launch_description():
                 "route_target_lookahead_distance_m",
                 default_value="15.0",
                 description="route path から選ぶ target lookahead 距離 [m]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_speed_adaptive_lookahead",
+                default_value="true",
+                description="速度に応じて route target lookahead を伸ばします。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_lookahead_time_sec",
+                default_value="1.2",
+                description="速度連動 lookahead に使う時間 horizon [s]。",
+            ),
+            DeclareLaunchArgument(
+                "route_target_max_lookahead_distance_m",
+                default_value="60.0",
+                description="速度連動 route target lookahead の上限 [m]。",
             ),
             DeclareLaunchArgument(
                 "route_target_min_forward_distance_m",
@@ -699,6 +744,11 @@ def generate_launch_description():
                 description="OSRM route API endpoint。",
             ),
             DeclareLaunchArgument(
+                "phone_bridge_publish_rate_hz",
+                default_value="10.0",
+                description="phone bridge が現在地/route path を再publishする周期 [Hz]。",
+            ),
+            DeclareLaunchArgument(
                 "phone_bridge_fix_stale_timeout_sec",
                 default_value="3.0",
                 description="スマホ現在地を fresh とみなして publish する最大 age [s]。",
@@ -722,6 +772,16 @@ def generate_launch_description():
                 "phone_bridge_status_topic",
                 default_value="/phone/location/status",
                 description="phone_location_bridge health/status JSON topic。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_path_step_m",
+                default_value="2.0",
+                description="phone bridge が出す /shadow/route/gui_path の点間隔 [m]。",
+            ),
+            DeclareLaunchArgument(
+                "phone_bridge_max_path_length_m",
+                default_value="400.0",
+                description="phone bridge が出す /shadow/route/gui_path の最大長 [m]。",
             ),
             DeclareLaunchArgument(
                 "phone_bridge_route_command",
@@ -809,8 +869,9 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "bag_record_regex",
                 default_value=(
-                    "(/shadow/.*|/livox/lane_detection/.*|/Odometry|/path|/scan|"
-                    "/phone/gps/fix|/spresense/gps/fix)"
+                    "(/shadow/.*|/livox/lane_detection/.*|/yolo/.*|/Odometry|/path|/scan|"
+                    "/cloud_registered|/cloud_registered_body|/tf|/tf_static|"
+                    "/sensing/camera/.*|/phone/.*|/spresense/gps/fix|/vehicle/gps_status)"
                 ),
                 description="record_shadow_bag=true のとき記録する topic regex。",
             ),

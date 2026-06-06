@@ -40,6 +40,18 @@ def unique_topics(primary, fallback_topics):
     return unique
 
 
+def string_list(value):
+    if value is None:
+        return []
+    values = value.split(",") if isinstance(value, str) else value
+    result = []
+    for item in values:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
 class LatestSample:
     # 各入力 topic の最新値と受信時刻を持ち、stale 判定を共通化する。
     def __init__(self):
@@ -87,6 +99,21 @@ class E2ETransfuserNode(Node):
         self.lead_force_timm_pretrained_off = bool(
             self.declare_parameter("lead_force_timm_pretrained_off", True).value
         )
+        self.lead_lidar_raster_enabled = bool(
+            self.declare_parameter("lead_lidar_raster_enabled", True).value
+        )
+        self.lead_lidar_flip_y_axis = bool(
+            self.declare_parameter("lead_lidar_flip_y_axis", True).value
+        )
+        self.lead_lidar_history_size = int(
+            self.declare_parameter("lead_lidar_history_size", 1).value
+        )
+        self.lead_lidar_max_points = int(
+            self.declare_parameter("lead_lidar_max_points", 250000).value
+        )
+        self.lead_lidar_expected_frame_ids = string_list(
+            self.declare_parameter("lead_lidar_expected_frame_ids", "body,base_link").value
+        )
         self.image_topic = self.declare_parameter(
             "image_topic", "/sensing/camera/camera0/image_rect_color"
         ).value
@@ -99,16 +126,63 @@ class E2ETransfuserNode(Node):
         self.camera_info_topic = self.declare_parameter(
             "camera_info_topic", "/sensing/camera/camera0/camera_info"
         ).value
+        self.synthesize_camera_info_when_missing = bool(
+            self.declare_parameter("synthesize_camera_info_when_missing", False).value
+        )
+        self.synthetic_camera_info_focal_length_px = float(
+            self.declare_parameter("synthetic_camera_info_focal_length_px", 0.0).value
+        )
+        self.synthetic_camera_info_frame_id = self.declare_parameter(
+            "synthetic_camera_info_frame_id", ""
+        ).value
         self.pointcloud_topic = self.declare_parameter("pointcloud_topic", "/livox/lidar").value
         self.sensor_input_mode = self.declare_parameter("sensor_input_mode", "auto").value
         self.odom_topic = self.declare_parameter("odom_topic", "/Odometry").value
         self.target_point_topic = self.declare_parameter(
             "target_point_topic", "/shadow/route/target_point"
         ).value
+        self.target_path_topic = self.declare_parameter(
+            "target_path_topic", "/shadow/route/target_path"
+        ).value
+        self.use_target_path_triplet = bool(
+            self.declare_parameter("use_target_path_triplet", True).value
+        )
+        self.target_path_previous_distance_m = float(
+            self.declare_parameter("target_path_previous_distance_m", 5.0).value
+        )
+        self.target_path_current_distance_m = float(
+            self.declare_parameter("target_path_current_distance_m", 15.0).value
+        )
+        self.target_path_next_distance_m = float(
+            self.declare_parameter("target_path_next_distance_m", 25.0).value
+        )
+        self.target_path_speed_adaptive = bool(
+            self.declare_parameter("target_path_speed_adaptive", True).value
+        )
+        self.target_path_speed_lookahead_time_sec = max(
+            0.0,
+            float(self.declare_parameter("target_path_speed_lookahead_time_sec", 1.2).value),
+        )
+        self.target_path_max_current_distance_m = max(
+            self.target_path_current_distance_m,
+            float(self.declare_parameter("target_path_max_current_distance_m", 60.0).value),
+        )
+        self.target_path_min_forward_distance_m = float(
+            self.declare_parameter("target_path_min_forward_distance_m", 0.5).value
+        )
+        self.target_path_expected_frame_ids = string_list(
+            self.declare_parameter("target_path_expected_frame_ids", "base_link,body").value
+        )
+        self.target_path_require_expected_frame = bool(
+            self.declare_parameter("target_path_require_expected_frame", True).value
+        )
         self.route_command_topic = self.declare_parameter(
             "route_command_topic", "/shadow/route/command"
         ).value
         self.output_frame = self.declare_parameter("output_frame", "base_link").value
+        self.raw_lead_path_topic = self.declare_parameter(
+            "raw_lead_path_topic", "/shadow/e2e/path_raw_lead"
+        ).value
         self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 10.0).value)
         self.input_timeout_sec = float(self.declare_parameter("input_timeout_sec", 0.5).value)
         self.camera_only_confidence_scale = self.clamp01(
@@ -125,6 +199,7 @@ class E2ETransfuserNode(Node):
         self.enable_debug_markers = bool(
             self.declare_parameter("enable_debug_markers", True).value
         )
+        self.lead_flip_y_axis = bool(self.declare_parameter("lead_flip_y_axis", True).value)
         self.disable_aux_heads = bool(self.declare_parameter("disable_aux_heads", True).value)
         self.single_checkpoint = bool(self.declare_parameter("single_checkpoint", True).value)
         self.allow_int8 = bool(self.declare_parameter("allow_int8", False).value)
@@ -142,7 +217,19 @@ class E2ETransfuserNode(Node):
             "pointcloud": LatestSample(),
             "odom": LatestSample(),
             "target_point": LatestSample(),
+            "target_path": LatestSample(),
             "route_command": LatestSample(),
+        }
+        self.last_target_triplet_status = {
+            "source": "not_started",
+            "target_path_topic": self.target_path_topic,
+            "use_target_path_triplet": self.use_target_path_triplet,
+            "frame_id": "",
+            "frame_ok": False,
+            "speed_mps": 0.0,
+            "requested_distances_m": {},
+            "actual_distances_m": {},
+            "points": {},
         }
 
         # 起動時に一度だけ環境診断する。重い checkpoint load はここでは行わない。
@@ -161,6 +248,8 @@ class E2ETransfuserNode(Node):
         self.lead_preprocess_latency_ms = None
         self.lead_forward_latency_ms = None
         self.lead_forward_count = 0
+        self.camera_info_source = "missing"
+        self.synthetic_camera_info_count = 0
         if self.runtime_mode == "lead_python":
             self.lead_runtime = LeadTorchRuntime(
                 lead_project_root=self.lead_project_root,
@@ -174,6 +263,10 @@ class E2ETransfuserNode(Node):
                 torch_lib=self.lead_torch_lib,
                 force_timm_pretrained_off=self.lead_force_timm_pretrained_off,
                 input_preprocess_backend=self.input_preprocess_backend,
+                lidar_raster_enabled=self.lead_lidar_raster_enabled,
+                lidar_flip_y_axis=self.lead_lidar_flip_y_axis,
+                lidar_history_size=self.lead_lidar_history_size,
+                lidar_max_points=self.lead_lidar_max_points,
             )
             extra_roots = [FilePath.cwd(), _SOURCE_ROOT.parents[2]]
             if self.lead_runtime.load(extra_roots=extra_roots):
@@ -238,11 +331,17 @@ class E2ETransfuserNode(Node):
             self.create_subscription(
                 PointStamped, self.target_point_topic, self.target_point_callback, 10
             ),
+            self.create_subscription(Path, self.target_path_topic, self.target_path_callback, 10),
             self.create_subscription(String, self.route_command_topic, self.route_command_callback, 10),
         ]
 
         # 出力は shadow-mode 専用。実車制御 command には接続しない。
         self.path_pub = self.create_publisher(Path, "/shadow/e2e/path", 10)
+        self.raw_lead_path_pub = (
+            self.create_publisher(Path, self.raw_lead_path_topic, 10)
+            if self.raw_lead_path_topic
+            else None
+        )
         self.steering_pub = self.create_publisher(Float32, "/shadow/e2e/steering_proxy", 10)
         self.curvature_pub = self.create_publisher(Float32, "/shadow/e2e/curvature", 10)
         self.speed_target_pub = self.create_publisher(Float32, "/shadow/e2e/speed_target", 10)
@@ -260,10 +359,61 @@ class E2ETransfuserNode(Node):
         )
 
     def image_callback(self, msg):
-        self.samples["image"].update(msg, self.get_clock().now())
+        now = self.get_clock().now()
+        self.samples["image"].update(msg, now)
+        self.ensure_camera_info_from_image(msg, now)
 
     def camera_info_callback(self, msg):
         self.samples["camera_info"].update(msg, self.get_clock().now())
+        self.camera_info_source = "topic"
+
+    def ensure_camera_info_from_image(self, image_msg, now):
+        if not self.synthesize_camera_info_when_missing:
+            return
+        if self.samples["camera_info"].fresh(now, self.input_timeout_sec):
+            return
+
+        camera_info = CameraInfo()
+        camera_info.header = image_msg.header
+        if self.synthetic_camera_info_frame_id:
+            camera_info.header.frame_id = str(self.synthetic_camera_info_frame_id)
+        camera_info.width = image_msg.width
+        camera_info.height = image_msg.height
+        width = float(max(1, int(image_msg.width)))
+        height = float(max(1, int(image_msg.height)))
+        focal = self.synthetic_camera_info_focal_length_px
+        if focal <= 0.0:
+            focal = max(width, height)
+        cx = width * 0.5
+        cy = height * 0.5
+        camera_info.k = [
+            focal,
+            0.0,
+            cx,
+            0.0,
+            focal,
+            cy,
+            0.0,
+            0.0,
+            1.0,
+        ]
+        camera_info.p = [
+            focal,
+            0.0,
+            cx,
+            0.0,
+            0.0,
+            focal,
+            cy,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+        ]
+        self.samples["camera_info"].update(camera_info, now)
+        self.camera_info_source = "synthetic_from_image"
+        self.synthetic_camera_info_count += 1
 
     def pointcloud_callback(self, msg):
         self.samples["pointcloud"].update(msg, self.get_clock().now())
@@ -273,6 +423,9 @@ class E2ETransfuserNode(Node):
 
     def target_point_callback(self, msg):
         self.samples["target_point"].update(msg, self.get_clock().now())
+
+    def target_path_callback(self, msg):
+        self.samples["target_path"].update(msg, self.get_clock().now())
 
     def route_command_callback(self, msg):
         self.samples["route_command"].update(msg, self.get_clock().now())
@@ -312,7 +465,42 @@ class E2ETransfuserNode(Node):
             for name in ("odom", "target_point"):
                 if not self.samples[name].fresh(now, self.input_timeout_sec):
                     optional.append(name)
+        if self.use_target_path_triplet and not self.samples["target_path"].fresh(
+            now, self.input_timeout_sec
+        ):
+            optional.append("target_path")
         return optional
+
+    def lidar_frame_contract_status(self):
+        raster_status = (
+            self.lead_runtime.last_lidar_raster_status
+            if self.lead_runtime is not None
+            else {}
+        )
+        source = str(raster_status.get("source", ""))
+        frame_id = str(raster_status.get("frame_id", ""))
+        expected = list(self.lead_lidar_expected_frame_ids)
+        frame_ok = not expected or (bool(frame_id) and frame_id in expected)
+        if not self.lead_lidar_raster_enabled:
+            state = "disabled"
+        elif source != "pointcloud":
+            state = "waiting_for_pointcloud"
+        elif frame_ok:
+            state = "ok"
+        else:
+            state = "unexpected_frame"
+        reason = ""
+        if state == "unexpected_frame":
+            reason = "lidar raster input is used without TF transform; provide ego/body frame topic"
+        return {
+            "state": state,
+            "pointcloud_topic": self.pointcloud_topic,
+            "observed_frame_id": frame_id,
+            "expected_frame_ids": expected,
+            "frame_ok": frame_ok,
+            "tf_transform_applied": False,
+            "reason": reason,
+        }
 
     def missing_inputs(self, now):
         # target point は route proxy。開発時は require_target_point=false で入力待ちを緩められる。
@@ -360,16 +548,27 @@ class E2ETransfuserNode(Node):
         image_msg = self.samples["image"].msg
         if image_msg is None:
             return None
+        pointcloud_msg = (
+            self.samples["pointcloud"].msg
+            if self.pointcloud_required(now)
+            and self.samples["pointcloud"].fresh(now, self.input_timeout_sec)
+            else None
+        )
         try:
+            target_points_xy = self.current_lead_target_points_xy(now)
             data = self.lead_runtime.build_data_from_ros(
                 image_msg=image_msg,
-                pointcloud_msg=self.samples["pointcloud"].msg,
-                speed_mps=self.current_speed_mps(),
-                target_xy=self.current_target_xy(),
+                pointcloud_msg=pointcloud_msg,
+                speed_mps=self.current_speed_mps(now),
+                target_xy=target_points_xy["current"],
+                target_points_xy=target_points_xy,
                 command=self.current_route_command(),
             )
             forward = self.lead_runtime.forward(data)
-            path = self.path_from_xy(now, forward.path_xy)
+            raw_path = self.path_from_xy(now, forward.path_xy)
+            if self.raw_lead_path_pub is not None:
+                self.raw_lead_path_pub.publish(raw_path)
+            path = self.path_from_xy(now, self.lead_points_to_ros_points(forward.path_xy))
             steering, curvature = self.estimate_steering_from_path(path)
             self.lead_forward_latency_ms = forward.latency_ms
             self.lead_preprocess_latency_ms = self.lead_runtime.last_preprocess_latency_ms
@@ -391,12 +590,220 @@ class E2ETransfuserNode(Node):
             return float(target_msg.point.x), float(target_msg.point.y)
         return self.default_target_x_m, self.default_target_y_m
 
-    def current_speed_mps(self):
-        odom_msg = self.samples["odom"].msg
+    def current_lead_target_xy(self):
+        target_x, target_y = self.current_target_xy()
+        if self.lead_flip_y_axis:
+            target_y = -target_y
+        return target_x, target_y
+
+    def current_target_triplet_xy(self, now):
+        fallback_current = self.current_target_xy()
+        fallback = {
+            "previous": fallback_current,
+            "current": fallback_current,
+            "next": fallback_current,
+        }
+        speed_status = self.current_speed_status(now)
+        distances = self.target_path_requested_distances(speed_status["speed_mps"])
+        source = "target_point"
+        frame_id = self.current_target_frame_id()
+        frame_ok = self.target_frame_ok(frame_id)
+        reason = ""
+        points = fallback
+        fallback_distance = math.hypot(fallback_current[0], fallback_current[1])
+        actual_distances = {label: fallback_distance for label in fallback}
+        distance_reached = {label: False for label in fallback}
+
+        path_sample = self.samples["target_path"]
+        if self.use_target_path_triplet and path_sample.fresh(now, self.input_timeout_sec):
+            path_msg = path_sample.msg
+            path_frame = self.target_path_frame_id(path_msg, frame_id)
+            path_frame_ok = self.target_frame_ok(path_frame)
+            if path_msg is None or not path_msg.poses:
+                reason = "empty_target_path"
+            elif self.target_path_require_expected_frame and not path_frame_ok:
+                reason = "unexpected_target_path_frame"
+                frame_id = path_frame
+                frame_ok = path_frame_ok
+            else:
+                selected = {
+                    label: self.target_xy_from_path_distance_info(path_msg, distance)
+                    for label, distance in distances.items()
+                }
+                if all(item["point"] is not None for item in selected.values()):
+                    points = {label: item["point"] for label, item in selected.items()}
+                    actual_distances = {
+                        label: item["actual_distance_m"] for label, item in selected.items()
+                    }
+                    distance_reached = {
+                        label: item["reached"] for label, item in selected.items()
+                    }
+                    source = "target_path"
+                    frame_id = path_frame
+                    frame_ok = path_frame_ok
+                    if not all(distance_reached.values()):
+                        reason = "target_path_shorter_than_requested"
+                else:
+                    reason = "target_path_has_no_forward_points"
+                    frame_id = path_frame
+                    frame_ok = path_frame_ok
+        elif self.use_target_path_triplet:
+            reason = "missing_or_stale_target_path"
+        else:
+            reason = "target_path_triplet_disabled"
+
+        self.last_target_triplet_status = {
+            "source": source,
+            "reason": reason,
+            "target_path_topic": self.target_path_topic,
+            "target_point_topic": self.target_point_topic,
+            "use_target_path_triplet": self.use_target_path_triplet,
+            "target_path_require_expected_frame": self.target_path_require_expected_frame,
+            "frame_id": frame_id,
+            "expected_frame_ids": self.target_path_expected_frame_ids,
+            "frame_ok": frame_ok,
+            "speed_mps": speed_status["speed_mps"],
+            "speed_source": speed_status["source"],
+            "speed_age_sec": speed_status["age_sec"],
+            "speed_fresh": speed_status["fresh"],
+            "speed_adaptive": {
+                "enabled": self.target_path_speed_adaptive,
+                "lookahead_time_sec": self.target_path_speed_lookahead_time_sec,
+                "base_current_distance_m": self.target_path_current_distance_m,
+                "max_current_distance_m": self.target_path_max_current_distance_m,
+            },
+            "requested_distances_m": distances,
+            "distances_m": distances,
+            "actual_distances_m": actual_distances,
+            "distance_reached": distance_reached,
+            "points": {
+                label: {"x": float(point[0]), "y": float(point[1])}
+                for label, point in points.items()
+            },
+        }
+        return points
+
+    def target_path_requested_distances(self, speed_mps):
+        base_current = max(0.0, self.target_path_current_distance_m)
+        current = base_current
+        if self.target_path_speed_adaptive:
+            current += max(0.0, float(speed_mps)) * self.target_path_speed_lookahead_time_sec
+            current = min(self.target_path_max_current_distance_m, max(base_current, current))
+
+        if base_current > 1.0e-6:
+            previous = current * max(0.0, self.target_path_previous_distance_m) / base_current
+            next_point = current * max(base_current, self.target_path_next_distance_m) / base_current
+        else:
+            previous = max(0.0, self.target_path_previous_distance_m)
+            next_point = max(current, self.target_path_next_distance_m)
+
+        previous = min(current, max(self.target_path_min_forward_distance_m, previous))
+        next_point = max(current, next_point)
+        return {
+            "previous": float(previous),
+            "current": float(current),
+            "next": float(next_point),
+        }
+
+    def current_lead_target_points_xy(self, now):
+        points = self.current_target_triplet_xy(now)
+        return {label: self.ros_target_to_lead(point) for label, point in points.items()}
+
+    def ros_target_to_lead(self, point):
+        x, y = point
+        if self.lead_flip_y_axis:
+            y = -y
+        return x, y
+
+    def current_target_frame_id(self):
+        target_msg = self.samples["target_point"].msg
+        if target_msg is not None and target_msg.header.frame_id:
+            return str(target_msg.header.frame_id)
+        return self.output_frame
+
+    def target_frame_ok(self, frame_id):
+        if not self.target_path_expected_frame_ids:
+            return True
+        return bool(frame_id) and frame_id in self.target_path_expected_frame_ids
+
+    @staticmethod
+    def target_path_frame_id(path_msg, fallback):
+        if path_msg is None:
+            return fallback
+        if path_msg.header.frame_id:
+            return str(path_msg.header.frame_id)
+        for pose_stamped in path_msg.poses:
+            if pose_stamped.header.frame_id:
+                return str(pose_stamped.header.frame_id)
+        return fallback
+
+    def target_xy_from_path_distance_info(self, path_msg, distance_m):
+        target_distance = max(0.0, float(distance_m))
+        previous_x = 0.0
+        previous_y = 0.0
+        distance_accum = 0.0
+        last_point = None
+        last_distance = 0.0
+
+        for pose_stamped in path_msg.poses:
+            point = pose_stamped.pose.position
+            x = float(point.x)
+            y = float(point.y)
+            if not (math.isfinite(x) and math.isfinite(y)):
+                continue
+            if x < self.target_path_min_forward_distance_m:
+                continue
+            segment = math.hypot(x - previous_x, y - previous_y)
+            if segment <= 1.0e-6:
+                last_point = (x, y)
+                previous_x = x
+                previous_y = y
+                continue
+            if distance_accum + segment >= target_distance:
+                ratio = (target_distance - distance_accum) / segment
+                ratio = min(1.0, max(0.0, ratio))
+                return {
+                    "point": (
+                        previous_x + (x - previous_x) * ratio,
+                        previous_y + (y - previous_y) * ratio,
+                    ),
+                    "actual_distance_m": target_distance,
+                    "reached": True,
+                }
+            distance_accum += segment
+            previous_x = x
+            previous_y = y
+            last_point = (x, y)
+            last_distance = distance_accum
+        return {
+            "point": last_point,
+            "actual_distance_m": last_distance if last_point is not None else None,
+            "reached": False,
+        }
+
+    def target_xy_from_path_distance(self, path_msg, distance_m):
+        return self.target_xy_from_path_distance_info(path_msg, distance_m)["point"]
+
+    def lead_points_to_ros_points(self, points_xy):
+        if not self.lead_flip_y_axis:
+            return points_xy
+        return [(x, -y) for x, y in points_xy]
+
+    def current_speed_status(self, now=None):
+        odom_sample = self.samples["odom"]
+        odom_msg = odom_sample.msg
+        age_sec = odom_sample.age_sec(now) if now is not None else None
+        fresh = True if now is None else odom_sample.fresh(now, self.input_timeout_sec)
         if odom_msg is None:
-            return 0.0
+            return {"speed_mps": 0.0, "source": "missing", "age_sec": age_sec, "fresh": False}
+        if now is not None and not fresh:
+            return {"speed_mps": 0.0, "source": "stale_odom", "age_sec": age_sec, "fresh": False}
         twist = odom_msg.twist.twist.linear
-        return math.sqrt(twist.x * twist.x + twist.y * twist.y + twist.z * twist.z)
+        speed_mps = math.sqrt(twist.x * twist.x + twist.y * twist.y + twist.z * twist.z)
+        return {"speed_mps": speed_mps, "source": "odom", "age_sec": age_sec, "fresh": fresh}
+
+    def current_speed_mps(self, now=None):
+        return self.current_speed_status(now)["speed_mps"]
 
     def current_route_command(self):
         msg = self.samples["route_command"].msg
@@ -502,6 +909,9 @@ class E2ETransfuserNode(Node):
             "precision": self.precision_mode,
             "runtime_device": self.runtime_device,
             "input_preprocess_backend": self.input_preprocess_backend,
+            "camera_info_source": self.camera_info_source,
+            "synthesize_camera_info_when_missing": self.synthesize_camera_info_when_missing,
+            "synthetic_camera_info_count": self.synthetic_camera_info_count,
             "model_loaded": self.runtime_mode == "mock" or self.runtime_summary["ready"],
             "input_ready": input_ready,
             "missing_inputs": missing,
@@ -513,6 +923,9 @@ class E2ETransfuserNode(Node):
             "confidence": confidence,
             "frame_id": self.output_frame,
             "mode": "shadow_only",
+            "lead_flip_y_axis": self.lead_flip_y_axis,
+            "raw_lead_path_topic": self.raw_lead_path_topic,
+            "lead_target_triplet": self.last_target_triplet_status,
             "disable_aux_heads": self.disable_aux_heads,
             "single_checkpoint": self.single_checkpoint,
             "allow_int8": self.allow_int8,
@@ -522,6 +935,17 @@ class E2ETransfuserNode(Node):
             "lead_preprocess_latency_ms": self.lead_preprocess_latency_ms,
             "lead_forward_latency_ms": self.lead_forward_latency_ms,
             "lead_forward_error": self.lead_forward_error,
+            "lead_lidar_raster_enabled": self.lead_lidar_raster_enabled,
+            "lead_lidar_flip_y_axis": self.lead_lidar_flip_y_axis,
+            "lead_lidar_history_size": self.lead_lidar_history_size,
+            "lead_lidar_max_points": self.lead_lidar_max_points,
+            "lead_lidar_expected_frame_ids": self.lead_lidar_expected_frame_ids,
+            "lead_lidar_raster": (
+                self.lead_runtime.last_lidar_raster_status
+                if self.lead_runtime is not None
+                else None
+            ),
+            "lead_lidar_frame_contract": self.lidar_frame_contract_status(),
         }
         self.status_pub.publish(String(data=json.dumps(status, sort_keys=True)))
 

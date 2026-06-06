@@ -101,12 +101,23 @@ def generate_launch_description():
             "use_route_target": use_route_target,
             "use_phone_location_bridge": LaunchConfiguration("use_phone_location_bridge"),
             "route_target_output_topic": LaunchConfiguration("target_point_topic"),
+            "route_target_output_path_topic": LaunchConfiguration("target_path_topic"),
             "route_command_topic": LaunchConfiguration("route_command_topic"),
             "route_target_publish_rate_hz": LaunchConfiguration("route_target_publish_rate_hz"),
             "route_target_input_timeout_sec": LaunchConfiguration("input_timeout_sec"),
             "route_target_lookahead_distance_m": LaunchConfiguration(
                 "route_target_lookahead_distance_m"
             ),
+            "route_target_speed_adaptive_lookahead": LaunchConfiguration(
+                "route_target_speed_adaptive_lookahead"
+            ),
+            "route_target_lookahead_time_sec": LaunchConfiguration(
+                "route_target_lookahead_time_sec"
+            ),
+            "route_target_max_lookahead_distance_m": LaunchConfiguration(
+                "route_target_max_lookahead_distance_m"
+            ),
+            "route_target_default_y_m": LaunchConfiguration("route_target_default_y_m"),
             "route_target_source_priority": LaunchConfiguration(
                 "route_target_source_priority"
             ),
@@ -122,6 +133,7 @@ def generate_launch_description():
             "phone_bridge_tls_cert_file": LaunchConfiguration("phone_bridge_tls_cert_file"),
             "phone_bridge_tls_key_file": LaunchConfiguration("phone_bridge_tls_key_file"),
             "phone_bridge_osrm_service_url": LaunchConfiguration("phone_bridge_osrm_service_url"),
+            "phone_bridge_publish_rate_hz": LaunchConfiguration("phone_bridge_publish_rate_hz"),
             "phone_bridge_fix_stale_timeout_sec": LaunchConfiguration(
                 "phone_bridge_fix_stale_timeout_sec"
             ),
@@ -129,6 +141,10 @@ def generate_launch_description():
             "phone_bridge_goal_topic": LaunchConfiguration("phone_bridge_goal_topic"),
             "phone_bridge_gps_status_topic": LaunchConfiguration("phone_bridge_gps_status_topic"),
             "phone_bridge_status_topic": LaunchConfiguration("phone_bridge_status_topic"),
+            "phone_bridge_path_step_m": LaunchConfiguration("phone_bridge_path_step_m"),
+            "phone_bridge_max_path_length_m": LaunchConfiguration(
+                "phone_bridge_max_path_length_m"
+            ),
             "phone_bridge_route_command": LaunchConfiguration("phone_bridge_route_command"),
             "phone_bridge_auto_reroute_enabled": LaunchConfiguration(
                 "phone_bridge_auto_reroute_enabled"
@@ -290,10 +306,18 @@ def generate_launch_description():
             ),
             "output_path_topic": LaunchConfiguration("image_lane_path_topic"),
             "status_topic": LaunchConfiguration("camera_lane_detection_status_topic"),
+            "debug_mask_topic": LaunchConfiguration("camera_lane_detection_debug_mask_topic"),
+            "debug_image_topic": LaunchConfiguration("camera_lane_detection_debug_image_topic"),
             "output_frame": LaunchConfiguration("camera_lane_detection_output_frame"),
             "max_process_rate_hz": LaunchConfiguration("camera_lane_detection_max_process_rate_hz"),
             "input_width": LaunchConfiguration("camera_lane_detection_input_width"),
             "input_height": LaunchConfiguration("camera_lane_detection_input_height"),
+            "publish_debug_images": LaunchConfiguration(
+                "camera_lane_detection_publish_debug_images"
+            ),
+            "min_lane_confidence": LaunchConfiguration("camera_lane_detection_min_confidence"),
+            "smoothing_alpha": LaunchConfiguration("camera_lane_detection_smoothing_alpha"),
+            "roi_top_ratio": LaunchConfiguration("camera_lane_detection_roi_top_ratio"),
         }.items(),
         condition=IfCondition(use_camera_lane_detection),
     )
@@ -336,6 +360,25 @@ def generate_launch_description():
                 "lead_force_timm_pretrained_off": ParameterValue(
                     LaunchConfiguration("lead_force_timm_pretrained_off"), value_type=bool
                 ),
+                "lead_lidar_raster_enabled": ParameterValue(
+                    LaunchConfiguration("e2e_lead_lidar_raster_enabled"),
+                    value_type=bool,
+                ),
+                "lead_lidar_flip_y_axis": ParameterValue(
+                    LaunchConfiguration("e2e_lead_lidar_flip_y_axis"),
+                    value_type=bool,
+                ),
+                "lead_lidar_history_size": ParameterValue(
+                    LaunchConfiguration("e2e_lead_lidar_history_size"),
+                    value_type=int,
+                ),
+                "lead_lidar_max_points": ParameterValue(
+                    LaunchConfiguration("e2e_lead_lidar_max_points"),
+                    value_type=int,
+                ),
+                "lead_lidar_expected_frame_ids": LaunchConfiguration(
+                    "e2e_lead_lidar_expected_frame_ids"
+                ),
                 "disable_aux_heads": ParameterValue(
                     LaunchConfiguration("disable_aux_heads"), value_type=bool
                 ),
@@ -351,12 +394,60 @@ def generate_launch_description():
                     value_type=bool,
                 ),
                 "camera_info_topic": LaunchConfiguration("camera_info_topic"),
-                "pointcloud_topic": LaunchConfiguration("pointcloud_topic"),
+                "synthesize_camera_info_when_missing": ParameterValue(
+                    LaunchConfiguration("e2e_synthesize_camera_info_when_missing"),
+                    value_type=bool,
+                ),
+                "synthetic_camera_info_focal_length_px": ParameterValue(
+                    LaunchConfiguration("e2e_synthetic_camera_info_focal_length_px"),
+                    value_type=float,
+                ),
+                "synthetic_camera_info_frame_id": LaunchConfiguration(
+                    "e2e_synthetic_camera_info_frame_id"
+                ),
+                "pointcloud_topic": LaunchConfiguration("e2e_pointcloud_topic"),
                 "sensor_input_mode": LaunchConfiguration("e2e_sensor_input_mode"),
                 "odom_topic": LaunchConfiguration("odom_topic"),
                 "target_point_topic": LaunchConfiguration("target_point_topic"),
+                "target_path_topic": LaunchConfiguration("target_path_topic"),
+                "use_target_path_triplet": ParameterValue(
+                    LaunchConfiguration("use_target_path_triplet"), value_type=bool
+                ),
+                "target_path_previous_distance_m": ParameterValue(
+                    LaunchConfiguration("target_path_previous_distance_m"), value_type=float
+                ),
+                "target_path_current_distance_m": ParameterValue(
+                    LaunchConfiguration("target_path_current_distance_m"), value_type=float
+                ),
+                "target_path_next_distance_m": ParameterValue(
+                    LaunchConfiguration("target_path_next_distance_m"), value_type=float
+                ),
+                "target_path_speed_adaptive": ParameterValue(
+                    LaunchConfiguration("target_path_speed_adaptive"), value_type=bool
+                ),
+                "target_path_speed_lookahead_time_sec": ParameterValue(
+                    LaunchConfiguration("target_path_speed_lookahead_time_sec"),
+                    value_type=float,
+                ),
+                "target_path_max_current_distance_m": ParameterValue(
+                    LaunchConfiguration("target_path_max_current_distance_m"),
+                    value_type=float,
+                ),
+                "target_path_min_forward_distance_m": ParameterValue(
+                    LaunchConfiguration("target_path_min_forward_distance_m"), value_type=float
+                ),
+                "target_path_expected_frame_ids": LaunchConfiguration(
+                    "target_path_expected_frame_ids"
+                ),
+                "target_path_require_expected_frame": ParameterValue(
+                    LaunchConfiguration("target_path_require_expected_frame"), value_type=bool
+                ),
+                "raw_lead_path_topic": LaunchConfiguration("e2e_raw_lead_path_topic"),
                 "require_target_point": ParameterValue(
                     LaunchConfiguration("require_target_point"), value_type=bool
+                ),
+                "lead_flip_y_axis": ParameterValue(
+                    LaunchConfiguration("e2e_lead_flip_y_axis"), value_type=bool
                 ),
                 "publish_rate_hz": ParameterValue(
                     LaunchConfiguration("e2e_publish_rate_hz"), value_type=float
@@ -402,10 +493,12 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
+            "executable": LaunchConfiguration("e2e_path_overlay_executable"),
             "param_file": e2e_path_overlay_param_file,
             "image_topic": LaunchConfiguration("e2e_overlay_input_image_topic"),
             "camera_info_topic": LaunchConfiguration("camera_info_topic"),
             "path_topic": LaunchConfiguration("e2e_path_topic"),
+            "lane_path_topic": LaunchConfiguration("image_lane_path_topic"),
             "yolo_detections_topic": LaunchConfiguration("yolo_detections_topic"),
             "output_image_topic": LaunchConfiguration("e2e_overlay_image_topic"),
             "output_compressed_image_topic": LaunchConfiguration(
@@ -420,6 +513,15 @@ def generate_launch_description():
             "lane_input_camera_info_topic": LaunchConfiguration(
                 "e2e_lane_input_camera_info_topic"
             ),
+            "synthesize_camera_info_when_missing": LaunchConfiguration(
+                "e2e_overlay_synthesize_camera_info_when_missing"
+            ),
+            "synthetic_camera_info_focal_length_px": LaunchConfiguration(
+                "e2e_overlay_synthetic_camera_info_focal_length_px"
+            ),
+            "synthetic_camera_info_frame_id": LaunchConfiguration(
+                "e2e_overlay_synthetic_camera_info_frame_id"
+            ),
             "use_tf_translation": LaunchConfiguration("e2e_overlay_use_tf_translation"),
             "output_max_edge_px": LaunchConfiguration("e2e_overlay_output_max_edge_px"),
             "process_rate_hz": LaunchConfiguration("e2e_overlay_process_rate_hz"),
@@ -428,6 +530,27 @@ def generate_launch_description():
             ),
             "model_input_width_px": LaunchConfiguration("e2e_model_input_width_px"),
             "model_input_height_px": LaunchConfiguration("e2e_model_input_height_px"),
+            "model_input_layout": LaunchConfiguration("e2e_model_input_layout"),
+            "model_input_camera_count": LaunchConfiguration("e2e_model_input_camera_count"),
+            "model_input_front_camera_slot": LaunchConfiguration(
+                "e2e_model_input_front_camera_slot"
+            ),
+            "model_input_crop_to_slot_aspect": LaunchConfiguration(
+                "e2e_model_input_crop_to_slot_aspect"
+            ),
+            "draw_lane_path": LaunchConfiguration("e2e_overlay_draw_lane_path"),
+            "lane_path_line_width_px": LaunchConfiguration(
+                "e2e_overlay_lane_path_line_width_px"
+            ),
+            "lane_path_outline_width_px": LaunchConfiguration(
+                "e2e_overlay_lane_path_outline_width_px"
+            ),
+            "lane_path_ribbon_width_m": LaunchConfiguration(
+                "e2e_overlay_lane_path_ribbon_width_m"
+            ),
+            "stale_lane_path_timeout_sec": LaunchConfiguration(
+                "e2e_overlay_stale_lane_path_timeout_sec"
+            ),
             "yolo_input_width_px": LaunchConfiguration("e2e_yolo_input_width_px"),
             "yolo_input_height_px": LaunchConfiguration("e2e_yolo_input_height_px"),
             "lane_input_width_px": LaunchConfiguration("e2e_lane_input_width_px"),
@@ -512,6 +635,7 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("pointcloud_topic", default_value="/cloud_registered"),
+            DeclareLaunchArgument("e2e_pointcloud_topic", default_value="/cloud_registered_body"),
             DeclareLaunchArgument("localization_lidar_odom_topic", default_value="/Odometry"),
             DeclareLaunchArgument("odom_topic", default_value="/shadow/fused/odometry"),
             DeclareLaunchArgument("phone_fix_topic", default_value="/phone/gps/fix"),
@@ -614,9 +738,14 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("yolo_detections_topic", default_value="/yolo/detections"),
             DeclareLaunchArgument("target_point_topic", default_value="/shadow/route/target_point"),
+            DeclareLaunchArgument("target_path_topic", default_value="/shadow/route/target_path"),
             DeclareLaunchArgument("route_command_topic", default_value="/shadow/route/command"),
             DeclareLaunchArgument("route_target_publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("route_target_lookahead_distance_m", default_value="15.0"),
+            DeclareLaunchArgument("route_target_speed_adaptive_lookahead", default_value="true"),
+            DeclareLaunchArgument("route_target_lookahead_time_sec", default_value="1.2"),
+            DeclareLaunchArgument("route_target_max_lookahead_distance_m", default_value="60.0"),
+            DeclareLaunchArgument("route_target_default_y_m", default_value="0.0"),
             DeclareLaunchArgument(
                 "route_target_source_priority",
                 default_value="gui_route,image_lane,shadow_virtual",
@@ -645,6 +774,7 @@ def generate_launch_description():
                 "phone_bridge_osrm_service_url",
                 default_value="https://routing.openstreetmap.de/routed-car/route/v1/driving",
             ),
+            DeclareLaunchArgument("phone_bridge_publish_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("phone_bridge_fix_stale_timeout_sec", default_value="3.0"),
             DeclareLaunchArgument("phone_bridge_fix_topic", default_value="/phone/gps/fix"),
             DeclareLaunchArgument("phone_bridge_goal_topic", default_value="/phone/route/goal"),
@@ -654,6 +784,8 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "phone_bridge_status_topic", default_value="/phone/location/status"
             ),
+            DeclareLaunchArgument("phone_bridge_path_step_m", default_value="2.0"),
+            DeclareLaunchArgument("phone_bridge_max_path_length_m", default_value="400.0"),
             DeclareLaunchArgument("phone_bridge_route_command", default_value="lane_follow"),
             DeclareLaunchArgument("phone_bridge_auto_reroute_enabled", default_value="true"),
             DeclareLaunchArgument("phone_bridge_off_route_threshold_m", default_value="30.0"),
@@ -675,6 +807,14 @@ def generate_launch_description():
                 default_value="/shadow/perception/lane_status",
             ),
             DeclareLaunchArgument(
+                "camera_lane_detection_debug_mask_topic",
+                default_value="/shadow/perception/lane_mask",
+            ),
+            DeclareLaunchArgument(
+                "camera_lane_detection_debug_image_topic",
+                default_value="/shadow/perception/lane_debug_image",
+            ),
+            DeclareLaunchArgument(
                 "camera_lane_detection_output_frame",
                 default_value="base_link",
             ),
@@ -682,10 +822,21 @@ def generate_launch_description():
             DeclareLaunchArgument("camera_lane_detection_input_width", default_value="512"),
             DeclareLaunchArgument("camera_lane_detection_input_height", default_value="288"),
             DeclareLaunchArgument(
+                "camera_lane_detection_publish_debug_images",
+                default_value="true",
+            ),
+            DeclareLaunchArgument("camera_lane_detection_min_confidence", default_value="0.25"),
+            DeclareLaunchArgument("camera_lane_detection_smoothing_alpha", default_value="0.35"),
+            DeclareLaunchArgument("camera_lane_detection_roi_top_ratio", default_value="0.45"),
+            DeclareLaunchArgument(
                 "e2e_overlay_input_image_topic",
                 default_value="/sensing/camera/camera0/image_rect_color",
             ),
             DeclareLaunchArgument("e2e_path_topic", default_value="/shadow/e2e/path"),
+            DeclareLaunchArgument(
+                "e2e_raw_lead_path_topic",
+                default_value="/shadow/e2e/path_raw_lead",
+            ),
             DeclareLaunchArgument(
                 "e2e_overlay_image_topic",
                 default_value="/shadow/e2e/overlay_image",
@@ -696,14 +847,49 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("e2e_overlay_compressed_jpeg_quality", default_value="80"),
             DeclareLaunchArgument("e2e_overlay_use_tf_translation", default_value="true"),
+            DeclareLaunchArgument(
+                "e2e_path_overlay_executable",
+                default_value="e2e_path_overlay_node",
+            ),
             DeclareLaunchArgument("e2e_overlay_output_max_edge_px", default_value="640"),
             DeclareLaunchArgument("e2e_overlay_process_rate_hz", default_value="10.0"),
             DeclareLaunchArgument("e2e_overlay_stale_image_timeout_sec", default_value="0.5"),
+            DeclareLaunchArgument("e2e_overlay_draw_lane_path", default_value="true"),
+            DeclareLaunchArgument("e2e_overlay_lane_path_line_width_px", default_value="4"),
+            DeclareLaunchArgument("e2e_overlay_lane_path_outline_width_px", default_value="2"),
+            DeclareLaunchArgument("e2e_overlay_lane_path_ribbon_width_m", default_value="0.0"),
+            DeclareLaunchArgument("e2e_overlay_stale_lane_path_timeout_sec", default_value="1.0"),
+            DeclareLaunchArgument(
+                "e2e_overlay_synthesize_camera_info_when_missing",
+                default_value="false",
+            ),
+            DeclareLaunchArgument(
+                "e2e_overlay_synthetic_camera_info_focal_length_px",
+                default_value="0.0",
+            ),
+            DeclareLaunchArgument("e2e_overlay_synthetic_camera_info_frame_id", default_value=""),
             DeclareLaunchArgument("require_target_point", default_value="true"),
+            DeclareLaunchArgument("use_target_path_triplet", default_value="true"),
+            DeclareLaunchArgument("target_path_previous_distance_m", default_value="5.0"),
+            DeclareLaunchArgument("target_path_current_distance_m", default_value="15.0"),
+            DeclareLaunchArgument("target_path_next_distance_m", default_value="25.0"),
+            DeclareLaunchArgument("target_path_speed_adaptive", default_value="true"),
+            DeclareLaunchArgument("target_path_speed_lookahead_time_sec", default_value="1.2"),
+            DeclareLaunchArgument("target_path_max_current_distance_m", default_value="60.0"),
+            DeclareLaunchArgument("target_path_min_forward_distance_m", default_value="0.5"),
+            DeclareLaunchArgument(
+                "target_path_expected_frame_ids",
+                default_value="base_link,body",
+            ),
+            DeclareLaunchArgument("target_path_require_expected_frame", default_value="true"),
             DeclareLaunchArgument("record_shadow_bag", default_value="false"),
             DeclareLaunchArgument(
                 "bag_record_regex",
-                default_value="(/shadow/.*|/livox/lane_detection/.*|/yolo/.*|/Odometry|/scan)",
+                default_value=(
+                    "(/shadow/.*|/livox/lane_detection/.*|/yolo/.*|/Odometry|/scan|"
+                    "/cloud_registered|/cloud_registered_body|/tf|/tf_static|"
+                    "/sensing/camera/.*|/phone/.*|/vehicle/gps_status)"
+                ),
             ),
             DeclareLaunchArgument("metrics_csv_logging", default_value="false"),
             DeclareLaunchArgument(
@@ -728,6 +914,15 @@ def generate_launch_description():
             DeclareLaunchArgument("e2e_precision_mode", default_value="fp32"),
             DeclareLaunchArgument("e2e_runtime_device", default_value="cuda:0"),
             DeclareLaunchArgument("e2e_input_preprocess_backend", default_value="cpu"),
+            DeclareLaunchArgument("e2e_lead_flip_y_axis", default_value="true"),
+            DeclareLaunchArgument("e2e_lead_lidar_raster_enabled", default_value="true"),
+            DeclareLaunchArgument("e2e_lead_lidar_flip_y_axis", default_value="true"),
+            DeclareLaunchArgument("e2e_lead_lidar_history_size", default_value="1"),
+            DeclareLaunchArgument("e2e_lead_lidar_max_points", default_value="250000"),
+            DeclareLaunchArgument(
+                "e2e_lead_lidar_expected_frame_ids",
+                default_value="body,base_link",
+            ),
             DeclareLaunchArgument(
                 "e2e_model_input_image_topic",
                 default_value="/shadow/e2e/model_input_image",
@@ -737,8 +932,18 @@ def generate_launch_description():
                 default_value="/shadow/e2e/model_input_image",
             ),
             DeclareLaunchArgument("e2e_disable_image_fallback_topics", default_value="true"),
+            DeclareLaunchArgument("e2e_synthesize_camera_info_when_missing", default_value="false"),
+            DeclareLaunchArgument("e2e_synthetic_camera_info_focal_length_px", default_value="0.0"),
+            DeclareLaunchArgument("e2e_synthetic_camera_info_frame_id", default_value=""),
             DeclareLaunchArgument("e2e_model_input_width_px", default_value="1152"),
             DeclareLaunchArgument("e2e_model_input_height_px", default_value="384"),
+            DeclareLaunchArgument(
+                "e2e_model_input_layout",
+                default_value="front_center_stitched",
+            ),
+            DeclareLaunchArgument("e2e_model_input_camera_count", default_value="3"),
+            DeclareLaunchArgument("e2e_model_input_front_camera_slot", default_value="1"),
+            DeclareLaunchArgument("e2e_model_input_crop_to_slot_aspect", default_value="true"),
             DeclareLaunchArgument(
                 "e2e_yolo_input_image_topic",
                 default_value="/shadow/perception/yolo_input_image",
